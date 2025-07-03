@@ -1,0 +1,46 @@
+<!DOCTYPE html><html><meta charset="utf-8">
+<title>Colour-Mix Console</title>
+<style>
+body{font-family:Arial,Helvetica,sans-serif;margin:2rem;max-width:480px}
+label,button{display:block;margin-top:1rem}
+img{max-width:100%}
+</style>
+<h1>Dispense + Snapshot Demo</h1>
+
+<label>Colour
+  <select id="colour"><option>blue</option><option>red</option><option>green</option></select>
+</label>
+<label>Volume\u00a0(ml)
+  <input id="vol" type="number" min="1" max="50" value="25">
+</label>
+<button onclick="send()">Dispense & Snap</button>
+<pre id="log"></pre>
+<img id="snap">
+
+<script>
+async function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
+async function send(){
+  const colour=document.querySelector('#colour').value
+  const vol=document.querySelector('#vol').value
+  const body={mix_id:1,run_id:1,colour,volume_ml:vol}
+  log('POST /robot/dispense '+JSON.stringify(body))
+
+  let r=await fetch('/robot/dispense',{method:'POST',
+          headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+  let {cmd_id}=await r.json()
+  log('cmd_id='+cmd_id)
+
+  // poll status every second
+  while(true){
+    await sleep(1000)
+    let s=await (await fetch('/robot/'+cmd_id+'/status')).json()
+    log('status='+JSON.stringify(s))
+    if(s.status!=='running')break
+  }
+  // fetch snapshot
+  let snap=await (await fetch('/robot/'+cmd_id+'/pose-snapshot')).json()
+  document.querySelector('#snap').src=snap.url
+}
+function log(txt){document.querySelector('#log').textContent+=txt+"\n"}
+</script>
+

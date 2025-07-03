@@ -1,0 +1,38 @@
+version: "3.8"
+services:
+  api-gateway:
+    image: traefik:v3.0
+    command:
+      - "--providers.docker=true"
+      - "--entrypoints.web.address=:8080"
+    ports: ["8080:8080"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  robot-service:
+    build: ./robot_service
+    environment:
+      - PHOS_URL=http://phosphobot
+      - MODEL_ID=phospho-app/so101_dispense_v1-groot
+      - TARGET_POSE=[0.0,1.57,0.0,-1.57,0.0,1.57]
+      - TOL=0.03
+    labels:
+      - "traefik.http.routers.robot.rule=PathPrefix(`/robot`)"
+      - "traefik.http.routers.robot.entrypoints=web"
+    depends_on: [api-gateway]
+
+  vision-bridge:
+    build: ./vision_bridge
+    environment:
+      - PHOS_URL=http://phosphobot
+      - S3_ENDPOINT=http://minio:9000
+      - AWS_ACCESS_KEY_ID=miniokey
+      - AWS_SECRET_ACCESS_KEY=miniosecret
+      - BUCKET=snapshots
+    depends_on: [robot-service]
+
+  frontend:
+    build: ./frontend
+    labels:
+      - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.frontend.entrypoints=web"
