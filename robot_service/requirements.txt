@@ -1,0 +1,7 @@
+fastapi==0.110.* 
+uvicorn[standard]==0.29.* 
+pydantic==2.* 
+httpx==0.27.* 
+aiokafka==0.9.*        # optional if you switch to Kafka events
+pyzmq==26.*            # ZMQ subscribe (Phosphobot state bus)
+prometheus-client==0.20.*
