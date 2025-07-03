@@ -1,7 +1,9 @@
 import os, uuid, io, datetime
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
 import httpx, boto3
+import numpy as np, cv2
+from colour_checker_detection import detect_colour_checkers_segmentation
 from prometheus_client import Counter, start_http_server
 
 PHOS_URL = os.getenv("PHOS_URL", "http://phosphobot")
@@ -40,3 +42,22 @@ async def snapshot(req: SnapReq):
     presigned = s3.generate_presigned_url("get_object",
         Params={"Bucket": BUCKET, "Key": key}, ExpiresIn=86400)
     return {"url": presigned}
+
+
+@app.post("/color-checker")
+async def color_checker(file: UploadFile = File(...)):
+    """Detect colour checkers in the uploaded image."""
+    data = await file.read()
+    arr = np.frombuffer(data, np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if img is None:
+        raise HTTPException(400, "Invalid image")
+
+    results = detect_colour_checkers_segmentation(img, additional_data=True)
+    dets = []
+    for r in results:
+        dets.append({
+            "quadrilateral": r.quadrilateral.tolist(),
+            "swatch_colours": r.swatch_colours.tolist(),
+        })
+    return {"detections": dets}
