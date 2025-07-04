@@ -20,3 +20,14 @@ Create the `snapshots` bucket in object storage after the services start:
 docker exec -it $(docker compose ps -q vision-bridge) \
   aws --endpoint-url http://minio:9000 s3 mb s3://snapshots
 ```
+
+## Testing the Colour Checker
+
+To verify the colour checker detection use the provided script:
+
+```bash
+python vision_bridge/tests/test_color_checker.py
+```
+
+The script uploads the sample image from `vision_bridge/samples` to the
+`/color-checker` endpoint and prints the JSON response.
