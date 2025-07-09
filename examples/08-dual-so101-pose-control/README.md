@@ -67,6 +67,37 @@ python interactive_control.py
 - Keep emergency stop accessible
 - Ensure adequate workspace for both arms
 - Test single arm movements before dual arm coordination
+- **Use workspace validation** to avoid forbidden poses
+
+### Workspace Validation
+This package includes tools to check if poses are reachable and safe:
+
+```bash
+# Quick demo of workspace validation
+python workspace_demo.py
+
+# Check if a specific pose is reachable
+python workspace_validator.py --check-pose 0.25 0.15 0.20
+
+# Get workspace summary and boundaries  
+python workspace_validator.py --summary
+
+# Sample and visualize the workspace
+python workspace_validator.py --sample-workspace --resolution 15
+python workspace_validator.py --visualize
+```
+
+**Safe workspace bounds for SO-101:**
+- X (forward): 0.08m to 0.35m
+- Y (lateral): ±0.25m  
+- Z (height): 0.03m to 0.32m
+- Orientations: ±90° roll/pitch, ±180° yaw
+
+**Always validate poses** before sending to the robot to avoid:
+- Base collisions
+- Ground collisions  
+- Joint limit violations
+- Unreachable positions
 
 ## Troubleshooting
 

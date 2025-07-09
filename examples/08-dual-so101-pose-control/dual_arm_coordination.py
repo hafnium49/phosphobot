@@ -15,6 +15,19 @@ from dual_so101_controller import DualSO101Controller
 class DualArmCoordinator:
     """Coordinator for synchronized dual-arm movements."""
     
+    # Common end effector pose presets (position in meters, orientation in degrees)
+    # These define where the gripper/tool tip should be positioned and oriented
+    POSES = {
+        'safe_left': {'position': [0.25, 0.15, 0.25], 'orientation': [0, 0, 0]},
+        'safe_right': {'position': [0.25, -0.15, 0.25], 'orientation': [0, 0, 0]},
+        'home_left': {'position': [0.20, 0.10, 0.18], 'orientation': [0, 0, -15]},
+        'home_right': {'position': [0.20, -0.10, 0.18], 'orientation': [0, 0, 15]},
+        'pickup_left': {'position': [0.30, 0.12, 0.12], 'orientation': [0, 45, 0]},
+        'pickup_right': {'position': [0.30, -0.12, 0.12], 'orientation': [0, 45, 0]},
+        'handoff_left': {'position': [0.20, 0.05, 0.18], 'orientation': [0, 0, 45]},
+        'handoff_right': {'position': [0.20, -0.05, 0.18], 'orientation': [0, 0, -45]},
+    }
+    
     def __init__(self, controller: DualSO101Controller):
         self.controller = controller
     
@@ -23,7 +36,23 @@ class DualArmCoordinator:
                             right_pose: list[float],
                             left_orientation: list[float] = None,
                             right_orientation: list[float] = None):
-        """Move both arms simultaneously to specified poses."""
+        """
+        Move both arm end effectors simultaneously to specified poses.
+        
+        This method uses INVERSE KINEMATICS automatically:
+        1. You specify WHERE you want each gripper (position + orientation)
+        2. Robot calculates WHAT joint angles are needed (inverse kinematics)
+        3. Both arms move to achieve the desired end effector poses
+        
+        Args:
+            left_pose: [x, y, z] position of left arm's end effector in meters
+            right_pose: [x, y, z] position of right arm's end effector in meters  
+            left_orientation: [rx, ry, rz] orientation of left end effector in degrees
+            right_orientation: [rx, ry, rz] orientation of right end effector in degrees
+            
+        Note: The pose refers to the gripper/tool tip position and orientation,
+              not the individual joint angles. IK is performed automatically.
+        """
         
         def move_left():
             self.controller.move_arm_absolute_pose(
@@ -195,6 +224,74 @@ class DualArmCoordinator:
                 break
         
         print("✅ Figure-eight pattern completed!")
+    
+    def move_to_preset(self, robot_id: int, preset_name: str):
+        """
+        Move arm end effector to a predefined pose preset.
+        
+        Args:
+            robot_id: 0 for left arm, 1 for right arm
+            preset_name: Name of preset pose for the end effector
+        """
+        if preset_name not in self.POSES:
+            raise ValueError(f"Unknown preset: {preset_name}. Available: {list(self.POSES.keys())}")
+        
+        pose = self.POSES[preset_name]
+        arm_name = "Left" if robot_id == 0 else "Right"
+        
+        self.controller.move_arm_absolute_pose(
+            robot_id=robot_id,
+            position=pose['position'],
+            orientation=pose['orientation']
+        )
+        print(f"✅ {arm_name} arm moved to '{preset_name}' pose")
+    
+    def move_both_to_preset(self, left_preset: str, right_preset: str):
+        """Move both arms to preset poses simultaneously."""
+        left_pose = self.POSES[left_preset]
+        right_pose = self.POSES[right_preset]
+        
+        self.synchronized_movement(
+            left_pose=left_pose['position'],
+            right_pose=right_pose['position'],
+            left_orientation=left_pose['orientation'],
+            right_orientation=right_pose['orientation']
+        )
+    
+    def create_custom_pose(self, 
+                          x: float, y: float, z: float,
+                          rx: float = 0, ry: float = 0, rz: float = 0) -> dict:
+        """
+        Create a custom end effector pose dictionary.
+        
+        Args:
+            x, y, z: End effector position coordinates in meters
+            rx, ry, rz: End effector orientation (Euler angles) in degrees
+            
+        Returns:
+            Dictionary with 'position' and 'orientation' keys for end effector pose
+        """
+        return {
+            'position': [x, y, z],
+            'orientation': [rx, ry, rz]
+        }
+    
+    def demonstrate_poses(self):
+        """Demonstrate different pose presets."""
+        print("\n🎭 Pose Demonstration")
+        print("=" * 20)
+        
+        poses_to_demo = [
+            ('safe_left', 'safe_right'),
+            ('home_left', 'home_right'), 
+            ('pickup_left', 'pickup_right'),
+            ('handoff_left', 'handoff_right')
+        ]
+        
+        for left_preset, right_preset in poses_to_demo:
+            print(f"\nMoving to: {left_preset} & {right_preset}")
+            self.move_both_to_preset(left_preset, right_preset)
+            time.sleep(2)
 
 
 def main():
@@ -230,8 +327,26 @@ def main():
         coordinator.collaborative_pick_place()
         time.sleep(2)
         
-        # Demo 4: Figure-eight pattern (uncomment to try)
-        # print("\nDemo 4: Figure-eight coordination pattern")
+        # Demo 4: Pose presets demonstration
+        print("\nDemo 4: Pose presets demonstration")
+        coordinator.demonstrate_poses()
+        time.sleep(2)
+        
+        # Demo 5: Custom poses
+        print("\nDemo 5: Custom pose creation")
+        custom_left = coordinator.create_custom_pose(x=0.22, y=0.08, z=0.16, rx=0, ry=30, rz=-20)
+        custom_right = coordinator.create_custom_pose(x=0.22, y=-0.08, z=0.16, rx=0, ry=30, rz=20)
+        
+        coordinator.synchronized_movement(
+            left_pose=custom_left['position'],
+            right_pose=custom_right['position'],
+            left_orientation=custom_left['orientation'],
+            right_orientation=custom_right['orientation']
+        )
+        time.sleep(2)
+        
+        # Demo 6: Figure-eight pattern (uncomment to try)
+        # print("\nDemo 6: Figure-eight coordination pattern")
         # coordinator.figure_eight_pattern(duration=5.0)
         
         print("\n✅ All coordination demonstrations completed!")
