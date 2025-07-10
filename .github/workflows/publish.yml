@@ -816,7 +816,7 @@ jobs:
         run: |
           python -m venv .testvenv
           source .testvenv/bin/activate
-          uv pip install phosphobot/dist/phosphobot-*.whl
+          pip install phosphobot/dist/phosphobot-*.whl
 
       - name: Run installed app
         run: |
