@@ -910,7 +910,6 @@ class SessionReponse(BaseModel):
 
     message: str
     session: Session | None = None
-    is_pro_user: bool | None = None
 
 
 class AuthResponse(BaseModel):
