@@ -62,42 +62,38 @@ python interactive_control.py
 - **Orientations**: Degrees
 - **Gripper**: 0.0 = closed, 1.0 = open
 
+
+## Advanced Features
+
+This package includes additional examples with advanced features:
+
+### 🔍 Workspace Analysis
+For detailed workspace validation and safety checking:
+```bash
+cd ../09-workspace-analysis
+python workspace_demo.py
+```
+- Pose reachability checking
+- Workspace boundary visualization
+- Forbidden pose detection
+- Safe pose suggestions
+
+### 🔧 Inverse Kinematics
+For advanced inverse kinematics demonstrations:
+```bash
+cd ../10-inverse-kinematics-demo
+python inverse_kinematics_demo.py
+```
+- Manual joint angle control
+- Forward/inverse kinematics testing
+- Trajectory planning examples
+
 ### Safety Notes
 - Start with small movements to test your setup
 - Keep emergency stop accessible
 - Ensure adequate workspace for both arms
 - Test single arm movements before dual arm coordination
-- **Use workspace validation** to avoid forbidden poses
-
-### Workspace Validation
-This package includes tools to check if poses are reachable and safe:
-
-```bash
-# Quick demo of workspace validation
-python workspace_demo.py
-
-# Check if a specific pose is reachable
-python workspace_validator.py --check-pose 0.25 0.15 0.20
-
-# Get workspace summary and boundaries  
-python workspace_validator.py --summary
-
-# Sample and visualize the workspace
-python workspace_validator.py --sample-workspace --resolution 15
-python workspace_validator.py --visualize
-```
-
-**Safe workspace bounds for SO-101:**
-- X (forward): 0.08m to 0.35m
-- Y (lateral): ±0.25m  
-- Z (height): 0.03m to 0.32m
-- Orientations: ±90° roll/pitch, ±180° yaw
-
-**Always validate poses** before sending to the robot to avoid:
-- Base collisions
-- Ground collisions  
-- Joint limit violations
-- Unreachable positions
+- **Always validate poses** using the workspace analysis tools
 
 ## Troubleshooting
 

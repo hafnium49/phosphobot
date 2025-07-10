@@ -96,6 +96,8 @@ def main():
         print("💡 Try the other examples for more advanced functionality:")
         print("   - dual_arm_coordination.py: Synchronized movements")
         print("   - interactive_control.py: Manual control interface")
+        print("   - ../10-inverse-kinematics-demo/: Learn about inverse kinematics")
+        print("   - ../09-workspace-analysis/: Workspace validation and analysis")
         
     except Exception as e:
         print(f"❌ Error during execution: {e}")

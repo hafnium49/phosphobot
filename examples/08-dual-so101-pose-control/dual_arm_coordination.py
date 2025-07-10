@@ -350,6 +350,11 @@ def main():
         # coordinator.figure_eight_pattern(duration=5.0)
         
         print("\n✅ All coordination demonstrations completed!")
+        print("💡 Explore related examples:")
+        print("   - dual_arm_basic.py: Basic dual-arm control")
+        print("   - interactive_control.py: Manual control interface")
+        print("   - ../10-inverse-kinematics-demo/: Learn about inverse kinematics")
+        print("   - ../09-workspace-analysis/: Workspace validation and analysis")
         
     except Exception as e:
         print(f"❌ Error during coordination: {e}")

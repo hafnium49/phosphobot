@@ -1,28 +1,15 @@
 """
 Dual SO-101 Arm Controller
 
-This module provides a simple interface for controlling two SO-1                # Suggest nearest safe pose
-                safe_pose, explanation = find_nearest_safe_pose(position)
-                print(f"💡 Suggested safe pose: {safe_pose}")
-                print(f"   {explanation}")
-                
-                # Ask user if they want to proceed with safe pose
-                user_response = input("   Use safe pose instead? (y/n): ").lower()
-                if user_response == 'y':
-                    position = safe_pose
-                    print(f"✅ Using safe pose: {position}")
-                else:
-                    print("❌ Aborted movement due to invalid pose")
-                    return False
-            else:
-                print(f"✅ Pose for arm {robot_id} appears valid")ng direct pose commands through the phosphobot API.
+This module provides a simple interface for controlling two SO-101 robotic arms
+using direct pose commands through the phosphobot API.
 """
 import numpy as np
 import httpx
 import time
 from typing import Optional
 
-# Import workspace validation utilities
+# Import workspace validation utilities (optional)
 try:
     from workspace_check import quick_pose_check, find_nearest_safe_pose
     WORKSPACE_VALIDATION_AVAILABLE = True
@@ -148,130 +135,178 @@ class DualSO101Controller:
             response.raise_for_status()
             print(f"✅ Arm {robot_id} moved to position {position}")
             return response.json()
-        except httpx.HTTPStatusError as e:
-            print(f"❌ Failed to move arm {robot_id}: {e.response.text}")
-            raise
+        except httpx.RequestError as e:
+            print(f"❌ Failed to move arm {robot_id}: {e}")
+            return None
     
     def move_arm_relative_pose(
-        self,
+        self, 
         robot_id: int,
         delta_position: list[float],  # [dx, dy, dz] in centimeters
         delta_orientation: Optional[list[float]] = None,  # [drx, dry, drz] in degrees
-        gripper_open: Optional[float] = None  # 0.0 = closed, 1.0 = open
+        position_tolerance: float = 0.01,
+        orientation_tolerance: float = 5.0,
+        max_trials: int = 3
     ):
         """
         Move an arm's end effector relative to its current pose.
         
-        This moves the gripper/tool tip by the specified delta amounts from 
-        its current position and orientation.
-        
         Args:
             robot_id: 0 for first arm, 1 for second arm
-            delta_position: [dx, dy, dz] end effector movement in centimeters
-            delta_orientation: [drx, dry, drz] end effector rotation change in degrees
-            gripper_open: Gripper state (0.0-1.0)
+            delta_position: [dx, dy, dz] relative movement in centimeters
+            delta_orientation: [drx, dry, drz] relative rotation in degrees (optional)
+            position_tolerance: Position tolerance in meters
+            orientation_tolerance: Orientation tolerance in degrees
+            max_trials: Maximum number of attempts
         """
+        # Convert centimeters to meters for the API
+        delta_position_m = [d / 100.0 for d in delta_position]
+        
         payload = {
-            "x": delta_position[0],
-            "y": delta_position[1],
-            "z": delta_position[2]
+            "dx": delta_position_m[0],
+            "dy": delta_position_m[1],
+            "dz": delta_position_m[2],
+            "position_tolerance": position_tolerance,
+            "orientation_tolerance": orientation_tolerance,
+            "max_trials": max_trials
         }
         
         if delta_orientation:
             payload.update({
-                "rx": delta_orientation[0],
-                "ry": delta_orientation[1],
-                "rz": delta_orientation[2]
+                "drx": delta_orientation[0],
+                "dry": delta_orientation[1],
+                "drz": delta_orientation[2]
             })
-            
-        if gripper_open is not None:
-            payload["open"] = gripper_open
         
         try:
             response = self.client.post(
-                "/move/relative", 
+                "/move/relative",
                 json=payload,
                 params={"robot_id": robot_id}
             )
             response.raise_for_status()
-            print(f"✅ Arm {robot_id} moved relatively by {delta_position}")
+            print(f"✅ Arm {robot_id} moved by {delta_position} cm")
             return response.json()
-        except httpx.HTTPStatusError as e:
-            print(f"❌ Failed to move arm {robot_id} relatively: {e.response.text}")
-            raise
-
-    def control_gripper(self, robot_id: int, open_command: float):
+        except httpx.RequestError as e:
+            print(f"❌ Failed to move arm {robot_id} relatively: {e}")
+            return None
+    
+    def control_gripper(self, robot_id: int, gripper_value: float):
         """
-        Control gripper directly.
+        Control the gripper of a specific arm.
         
         Args:
-            robot_id: 0 for first arm, 1 for second arm  
-            open_command: 0.0 = fully closed, 1.0 = fully open
+            robot_id: 0 for first arm, 1 for second arm
+            gripper_value: 0.0 = closed, 1.0 = open
         """
         try:
             response = self.client.post(
-                "/gripper/control",
-                json={"open_command": open_command},
+                "/gripper",
+                json={"value": gripper_value},
                 params={"robot_id": robot_id}
             )
             response.raise_for_status()
-            state = "open" if open_command > 0.5 else "closed"
+            state = "open" if gripper_value > 0.5 else "closed"
             print(f"✅ Arm {robot_id} gripper {state}")
             return response.json()
-        except httpx.HTTPStatusError as e:
-            print(f"❌ Failed to control gripper for arm {robot_id}: {e.response.text}")
-            raise
-
-    def get_current_pose(self, robot_id: int):
-        """Get current pose of the arm."""
+        except httpx.RequestError as e:
+            print(f"❌ Failed to control gripper for arm {robot_id}: {e}")
+            return None
+    
+    def get_arm_pose(self, robot_id: int):
+        """
+        Get the current pose of an arm's end effector.
+        
+        Args:
+            robot_id: 0 for first arm, 1 for second arm
+            
+        Returns:
+            dict: Current pose information
+        """
         try:
             response = self.client.get(
-                "/kinematics/forward", 
+                "/pose",
                 params={"robot_id": robot_id}
             )
             response.raise_for_status()
             return response.json()
-        except httpx.HTTPStatusError as e:
-            print(f"❌ Failed to get pose for arm {robot_id}: {e.response.text}")
-            raise
-
-    def get_robot_status(self):
-        """Get status of all connected robots."""
-        try:
-            response = self.client.get("/status")
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            print(f"❌ Failed to get robot status: {e.response.text}")
-            raise
-
-    def disconnect(self):
-        """Disconnect from the robot(s) and clean up resources."""
-        if self.simulation_mode:
-            # Cleanup simulation objects
-            if hasattr(self, 'left_arm'):
-                self.left_arm.disconnect()
-            if hasattr(self, 'right_arm'):
-                self.right_arm.disconnect()
-            print("✅ Disconnected from simulation")
-        else:
-            # Close HTTP client
-            if hasattr(self, 'client'):
-                self.client.close()
-            print("✅ Disconnected from server")
+        except httpx.RequestError as e:
+            print(f"❌ Failed to get pose for arm {robot_id}: {e}")
+            return None
     
-    def validate_pose(self, position: list[float], orientation: Optional[list[float]] = None) -> tuple[bool, str]:
+    def stop_arm(self, robot_id: int):
         """
-        Validate a pose without moving the robot.
+        Emergency stop for a specific arm.
         
         Args:
-            position: [x, y, z] coordinates in meters
-            orientation: [rx, ry, rz] Euler angles in degrees (optional)
-            
-        Returns:
-            Tuple of (is_valid, reason)
+            robot_id: 0 for first arm, 1 for second arm
         """
-        if not self.enable_workspace_validation:
-            return True, "Workspace validation disabled"
-            
-        return quick_pose_check(position, orientation)
+        try:
+            response = self.client.post(
+                "/stop",
+                params={"robot_id": robot_id}
+            )
+            response.raise_for_status()
+            print(f"🛑 Arm {robot_id} stopped")
+            return response.json()
+        except httpx.RequestError as e:
+            print(f"❌ Failed to stop arm {robot_id}: {e}")
+            return None
+    
+    def close(self):
+        """Clean up resources."""
+        if hasattr(self, 'client'):
+            self.client.close()
+        print("🔌 Controller disconnected")
+
+
+# Convenience functions for common operations
+def initialize_controller(**kwargs):
+    """Initialize and return a dual arm controller."""
+    return DualSO101Controller(**kwargs)
+
+def demo_basic_movement():
+    """Simple demo of basic dual arm movements."""
+    print("🤖 Dual SO-101 Basic Movement Demo")
+    
+    # Initialize controller
+    controller = DualSO101Controller()
+    
+    try:
+        # Move both arms to home positions
+        print("\n📍 Moving to home positions...")
+        controller.move_arm_absolute_pose(0, [0.25, 0.15, 0.20])  # Left arm
+        controller.move_arm_absolute_pose(1, [0.25, -0.15, 0.20])  # Right arm
+        
+        time.sleep(2)
+        
+        # Open grippers
+        print("\n✋ Opening grippers...")
+        controller.control_gripper(0, 1.0)  # Open left gripper
+        controller.control_gripper(1, 1.0)  # Open right gripper
+        
+        time.sleep(1)
+        
+        # Move arms to different positions
+        print("\n🏃 Moving to new positions...")
+        controller.move_arm_absolute_pose(0, [0.30, 0.20, 0.15])  # Left forward
+        controller.move_arm_absolute_pose(1, [0.30, -0.20, 0.15])  # Right forward
+        
+        time.sleep(2)
+        
+        # Close grippers
+        print("\n✊ Closing grippers...")
+        controller.control_gripper(0, 0.0)  # Close left gripper
+        controller.control_gripper(1, 0.0)  # Close right gripper
+        
+        print("\n✅ Demo completed successfully!")
+        
+    except Exception as e:
+        print(f"❌ Demo failed: {e}")
+    
+    finally:
+        controller.close()
+
+
+if __name__ == "__main__":
+    demo_basic_movement()

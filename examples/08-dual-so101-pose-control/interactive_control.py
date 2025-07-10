@@ -47,6 +47,12 @@ class InteractiveController:
         print("  m   - Show this menu")
         print("  x   - Exit")
         print()
+        print("💡 Related Examples:")
+        print("  - dual_arm_basic.py: Basic dual-arm control")
+        print("  - dual_arm_coordination.py: Synchronized movements")
+        print("  - ../10-inverse-kinematics-demo/: Learn about IK")
+        print("  - ../09-workspace-analysis/: Workspace validation")
+        print()
     
     def get_current_pose_info(self, robot_id: int):
         """Get and display current pose information."""
