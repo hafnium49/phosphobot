@@ -234,6 +234,22 @@ class DualSO101Controller:
             print(f"❌ Failed to get pose for arm {robot_id}: {e}")
             return None
     
+    def get_current_pose(self, robot_id: int):
+        """
+        Get the current pose of an arm's end effector.
+        
+        Args:
+            robot_id: 0 for first arm, 1 for second arm
+            
+        Returns:
+            list: Current [x, y, z] position in meters
+        """
+        pose_data = self.get_arm_pose(robot_id)
+        if pose_data:
+            # Extract position from pose data
+            return [pose_data.get('x', 0), pose_data.get('y', 0), pose_data.get('z', 0)]
+        return [0, 0, 0]
+    
     def stop_arm(self, robot_id: int):
         """
         Emergency stop for a specific arm.
@@ -251,6 +267,21 @@ class DualSO101Controller:
             return response.json()
         except httpx.RequestError as e:
             print(f"❌ Failed to stop arm {robot_id}: {e}")
+            return None
+    
+    def get_robot_status(self):
+        """
+        Get the status of all connected robots.
+        
+        Returns:
+            dict: Status information for all robots
+        """
+        try:
+            response = self.client.get("/status")
+            response.raise_for_status()
+            return response.json()
+        except httpx.RequestError as e:
+            print(f"❌ Failed to get robot status: {e}")
             return None
     
     def close(self):
