@@ -9,6 +9,22 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
+  phosphobot:
+    build: ./phosphobot/phosphobot
+    ports:
+      - "5555:5555"  # ZMQ state publisher
+      - "80:80"      # HTTP API
+    environment:
+      - ROBOT_TYPE=${ROBOT_TYPE:-simulator}
+      - ZMQ_PORT=5555
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
@@ -39,6 +55,8 @@ services:
     depends_on:
       api-gateway:
         condition: service_started
+      phosphobot:
+        condition: service_healthy
       minio:
         condition: service_healthy
     healthcheck:
@@ -57,6 +75,8 @@ services:
       - BUCKET=${BUCKET:-snapshots}
     depends_on:
       robot-service:
+        condition: service_healthy
+      phosphobot:
         condition: service_healthy
       minio:
         condition: service_healthy

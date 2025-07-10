@@ -46,6 +46,8 @@ class ErrorResponse(BaseModel):
     error: str
     detail: str
     cmd_id: str | None = None
+
+class DispenseStatus(BaseModel):
     status: str
     predicted_squeeze_sec: float | None = None
     created_at: float = Field(default_factory=time.time)
