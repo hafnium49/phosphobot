@@ -19,28 +19,76 @@ img{max-width:100%}
 
 <script>
 async function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
+
 async function send(){
-  const colour=document.querySelector('#colour').value
-  const vol=document.querySelector('#vol').value
-  const body={mix_id:1,run_id:1,colour,volume_ml:vol}
-  log('POST /robot/dispense '+JSON.stringify(body))
+  try {
+    const colour=document.querySelector('#colour').value
+    const vol=document.querySelector('#vol').value
+    const body={mix_id:1,run_id:1,colour,volume_ml:parseFloat(vol)}
+    log('POST /robot/dispense '+JSON.stringify(body))
 
-  let r=await fetch('/robot/dispense',{method:'POST',
-          headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
-  let {cmd_id}=await r.json()
-  log('cmd_id='+cmd_id)
+    let r=await fetch('/robot/dispense',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body)
+    })
+    
+    if (!r.ok) {
+      const error = await r.text()
+      throw new Error(`HTTP ${r.status}: ${error}`)
+    }
+    
+    let {cmd_id}=await r.json()
+    log('cmd_id='+cmd_id)
 
-  // poll status every second
-  while(true){
-    await sleep(1000)
-    let s=await (await fetch('/robot/'+cmd_id+'/status')).json()
-    log('status='+JSON.stringify(s))
-    if(s.status!=='running')break
+    // poll status every second with timeout
+    const maxPolls = 60 // 1 minute max
+    let polls = 0
+    while(polls < maxPolls){
+      await sleep(1000)
+      polls++
+      
+      try {
+        let statusResp = await fetch('/robot/'+cmd_id+'/status')
+        if (!statusResp.ok) {
+          throw new Error(`Status check failed: ${statusResp.status}`)
+        }
+        
+        let s = await statusResp.json()
+        log('status='+JSON.stringify(s))
+        if(s.status!=='running') break
+      } catch (e) {
+        log('Error checking status: ' + e.message)
+        break
+      }
+    }
+    
+    if (polls >= maxPolls) {
+      log('Timeout waiting for completion')
+      return
+    }
+    
+    // fetch snapshot with timeout
+    try {
+      let snapResp = await fetch('/robot/'+cmd_id+'/pose-snapshot')
+      if (!snapResp.ok) {
+        throw new Error(`Snapshot failed: ${snapResp.status}`)
+      }
+      let snap = await snapResp.json()
+      document.querySelector('#snap').src=snap.url
+      log('Snapshot captured successfully')
+    } catch (e) {
+      log('Error capturing snapshot: ' + e.message)
+    }
+  } catch (e) {
+    log('Error: ' + e.message)
   }
-  // fetch snapshot
-  let snap=await (await fetch('/robot/'+cmd_id+'/pose-snapshot')).json()
-  document.querySelector('#snap').src=snap.url
 }
-function log(txt){document.querySelector('#log').textContent+=txt+"\n"}
+
+function log(txt){
+  const logEl = document.querySelector('#log')
+  logEl.textContent += new Date().toLocaleTimeString() + ': ' + txt + "\n"
+  logEl.scrollTop = logEl.scrollHeight
+}
 </script>
 
