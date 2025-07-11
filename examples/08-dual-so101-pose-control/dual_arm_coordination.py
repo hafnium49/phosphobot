@@ -112,8 +112,8 @@ class DualArmCoordinator:
         
         # Phase 2: Pre-grasp with grippers open
         print("Phase 2: Opening grippers and moving to pre-grasp...")
-        self.controller.control_gripper(robot_id=0, open_command=1.0)
-        self.controller.control_gripper(robot_id=1, open_command=1.0)
+        self.controller.control_gripper(robot_id=0, gripper_value=1.0)
+        self.controller.control_gripper(robot_id=1, gripper_value=1.0)
         
         self.synchronized_movement(
             left_pose=[0.25, 0.15, 0.15],   # Left pre-grasp
@@ -131,8 +131,8 @@ class DualArmCoordinator:
         time.sleep(0.5)
         
         # Close grippers
-        self.controller.control_gripper(robot_id=0, open_command=0.0)
-        self.controller.control_gripper(robot_id=1, open_command=0.0)
+        self.controller.control_gripper(robot_id=0, gripper_value=0.0)
+        self.controller.control_gripper(robot_id=1, gripper_value=0.0)
         
         time.sleep(1)
         
@@ -162,8 +162,8 @@ class DualArmCoordinator:
         
         # Release objects
         print("Phase 7: Releasing objects...")
-        self.controller.control_gripper(robot_id=0, open_command=1.0)
-        self.controller.control_gripper(robot_id=1, open_command=1.0)
+        self.controller.control_gripper(robot_id=0, gripper_value=1.0)
+        self.controller.control_gripper(robot_id=1, gripper_value=1.0)
         
         time.sleep(1)
         
