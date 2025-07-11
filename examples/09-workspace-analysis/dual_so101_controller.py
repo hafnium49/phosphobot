@@ -127,10 +127,15 @@ class DualSO101Controller:
             })
         
         try:
+            # Add robot_id to payload and use the same format as working examples
+            payload.update({
+                "robot_id": robot_id,
+                "open": 0  # Keep gripper state, 0 = closed
+            })
+            
             response = self.client.post(
                 "/move/absolute",
-                json=payload,
-                params={"robot_id": robot_id}
+                json=payload
             )
             response.raise_for_status()
             print(f"✅ Arm {robot_id} moved to position {position}")
@@ -179,10 +184,15 @@ class DualSO101Controller:
             })
         
         try:
+            # Add robot_id to payload and use the same format as working examples
+            payload.update({
+                "robot_id": robot_id,
+                "open": 0  # Keep gripper state
+            })
+            
             response = self.client.post(
                 "/move/relative",
-                json=payload,
-                params={"robot_id": robot_id}
+                json=payload
             )
             response.raise_for_status()
             print(f"✅ Arm {robot_id} moved by {delta_position} cm")
@@ -200,15 +210,29 @@ class DualSO101Controller:
             gripper_value: 0.0 = closed, 1.0 = open
         """
         try:
-            response = self.client.post(
-                "/gripper",
-                json={"value": gripper_value},
-                params={"robot_id": robot_id}
-            )
-            response.raise_for_status()
-            state = "open" if gripper_value > 0.5 else "closed"
-            print(f"✅ Arm {robot_id} gripper {state}")
-            return response.json()
+            # Get current pose first to maintain position while changing gripper
+            current_pose = self.get_arm_pose(robot_id)
+            if current_pose:
+                # Use the current position but change gripper state
+                payload = {
+                    "x": current_pose.get('x', 0),
+                    "y": current_pose.get('y', 0), 
+                    "z": current_pose.get('z', 0),
+                    "rx": current_pose.get('rx', 0),
+                    "ry": current_pose.get('ry', 0),
+                    "rz": current_pose.get('rz', 0),
+                    "robot_id": robot_id,
+                    "open": int(gripper_value)  # Convert to int: 0 = closed, 1 = open
+                }
+                
+                response = self.client.post("/move/absolute", json=payload)
+                response.raise_for_status()
+                state = "open" if gripper_value > 0.5 else "closed"
+                print(f"✅ Arm {robot_id} gripper {state}")
+                return response.json()
+            else:
+                print(f"❌ Could not get current pose for arm {robot_id}")
+                return None
         except httpx.RequestError as e:
             print(f"❌ Failed to control gripper for arm {robot_id}: {e}")
             return None
@@ -224,12 +248,19 @@ class DualSO101Controller:
             dict: Current pose information
         """
         try:
-            response = self.client.get(
-                "/pose",
-                params={"robot_id": robot_id}
-            )
+            response = self.client.get("/pose")
             response.raise_for_status()
-            return response.json()
+            pose_data = response.json()
+            
+            # The API might return pose data in different formats
+            # Try to extract robot-specific data if available
+            if isinstance(pose_data, list) and len(pose_data) > robot_id:
+                return pose_data[robot_id]
+            elif isinstance(pose_data, dict):
+                return pose_data
+            else:
+                # Return a default pose if no specific data available
+                return {"x": 0, "y": 0, "z": 0, "rx": 0, "ry": 0, "rz": 0}
         except httpx.RequestError as e:
             print(f"❌ Failed to get pose for arm {robot_id}: {e}")
             return None
@@ -289,6 +320,19 @@ class DualSO101Controller:
         if hasattr(self, 'client'):
             self.client.close()
         print("🔌 Controller disconnected")
+    
+    def initialize_robot(self):
+        """
+        Initialize the robot connection (as used in examples 0 and 1).
+        """
+        try:
+            response = self.client.post("/move/init", json={})
+            response.raise_for_status()
+            print("✅ Robot initialized")
+            return response.json()
+        except httpx.RequestError as e:
+            print(f"❌ Failed to initialize robot: {e}")
+            return None
 
 
 # Convenience functions for common operations
@@ -304,6 +348,11 @@ def demo_basic_movement():
     controller = DualSO101Controller()
     
     try:
+        # Initialize robot (as done in examples 0 and 1)
+        print("\n🔧 Initializing robot...")
+        controller.initialize_robot()
+        time.sleep(2)
+        
         # Move both arms to home positions
         print("\n📍 Moving to home positions...")
         controller.move_arm_absolute_pose(0, [0.25, 0.15, 0.20])  # Left arm

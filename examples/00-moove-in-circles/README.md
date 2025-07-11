@@ -8,16 +8,49 @@ This example demonstrates how to use the PhosphoBot API to move a robot in circu
 - A robot running the PhosphoBot server
 - Required Python packages (install via `pip install -r requirements.txt`)
 
+## Usage
+
+### Basic Usage
+```bash
+# Run with default settings (robot device: 5A68009540, 5 circles, 30 steps)
+python circles_absolute.py
+```
+
+### Advanced Usage
+```bash
+# Specify a different robot arm by device name
+python circles_absolute.py --robot-id 5A68011529
+
+# Customize number of circles and steps
+python circles_absolute.py --circles 3 --steps 20
+
+# Combine options
+python circles_absolute.py --robot-id 5A68009448 --circles 10 --steps 40
+```
+
+### Command Line Options
+- `--robot-id`: Robot device name to control (default: 5A68009540)
+- `--circles`: Number of circles to perform (default: 5)  
+- `--steps`: Number of steps per circle (default: 30)
+
+### Help
+```bash
+python circles_absolute.py --help
+```
+
 ## Configuration
 
 The script `circles_absolute.py` contains several configurable parameters:
 
 ```python
-# Configurations
+# Network Configuration
 PI_IP: str = "127.0.0.1"  # IP address of the robot
 PI_PORT: int = 80         # Port of the robot's API server
+
+# Default Movement Parameters  
 NUMBER_OF_STEPS: int = 30 # Number of steps to complete one circle
 NUMBER_OF_CIRCLES: int = 5 # Number of circles to perform
+DEFAULT_ROBOT_ID: str = "5A68009540"  # Default robot device name
 ```
 
 Modify these values according to your setup.
