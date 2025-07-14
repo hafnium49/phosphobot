@@ -25,7 +25,25 @@ class HandTracker:
         # Video stream variables
         self.latest_frame = None
         self.stream_running = False
-        self.camera_url = "http://localhost:80/video/0"  # Use camera 0 which is available
+
+    def find_available_video_channel(self):
+        """Find the first available video channel."""
+        print("🔍 Searching for available video channels...")
+        for channel in range(10):  # Check channels 0-9
+            try:
+                print(f"  Testing channel {channel}...")
+                response = requests.get(f"http://localhost/video/{channel}", timeout=3, stream=True)
+                if response.status_code == 200:
+                    print(f"✅ Found working video channel: {channel}")
+                    response.close()  # Close the test connection
+                    return channel
+                else:
+                    print(f"  Channel {channel}: HTTP {response.status_code}")
+            except Exception as e:
+                print(f"  Channel {channel}: failed ({e})")
+                continue
+        print("❌ No working video channels found")
+        return None
 
     def calculate_hand_open_state(self, hand_landmarks):
         """Calculate hand open state based on thumb and finger tip distances."""
@@ -65,6 +83,15 @@ class HandTracker:
 
     def fetch_video_stream(self):
         """Fetch video frames from PhosphoBot API in a separate thread."""
+        # Find available video channel
+        video_channel = self.find_available_video_channel()
+        if video_channel is None:
+            print("❌ No video channels found")
+            return
+        
+        self.camera_url = f"http://localhost/video/{video_channel}"
+        print(f"📹 Using video channel: {video_channel}")
+        
         print("🔗 Connecting to PhosphoBot video stream...")
         
         while self.stream_running:
@@ -273,16 +300,16 @@ def main():
     
     # Test video stream availability
     print("\n🔧 Testing video stream availability...")
-    try:
-        response = requests.get("http://localhost:80/video/0", stream=True, timeout=5)
-        if response.status_code == 200:
-            print("✅ Video stream is available")
-        else:
-            print(f"❌ Video stream error: {response.status_code}")
-            return
-    except requests.RequestException as e:
-        print(f"❌ Failed to connect to video stream: {e}")
+    
+    # Create a temporary tracker instance to use the channel detection
+    temp_tracker = HandTracker()
+    video_channel = temp_tracker.find_available_video_channel()
+    
+    if video_channel is None:
+        print("❌ No working video channels found")
         return
+    
+    print(f"✅ Video stream is available on channel {video_channel}")
 
     print("\n🎯 Initializing hand tracker...")
     tracker = HandTracker()
