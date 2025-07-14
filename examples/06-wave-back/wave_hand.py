@@ -36,10 +36,38 @@ def signal_handler(sig, frame):
 signal.signal(signal.SIGINT, signal_handler)
 
 
+def find_available_video_channel():
+    """Find the first available video channel."""
+    print("🔍 Searching for available video channels...")
+    for channel in range(10):  # Check channels 0-9
+        try:
+            print(f"  Testing channel {channel}...")
+            response = requests.get(f"http://localhost/video/{channel}", timeout=3, stream=True)
+            if response.status_code == 200:
+                print(f"✅ Found working video channel: {channel}")
+                response.close()  # Close the test connection
+                return channel
+            else:
+                print(f"  Channel {channel}: HTTP {response.status_code}")
+        except Exception as e:
+            print(f"  Channel {channel}: failed ({e})")
+            continue
+    print("❌ No working video channels found")
+    return None
+
+
 def fetch_video_stream():
     """Fetch video frames from PhosphoBot API in a separate thread."""
     global latest_frame, stream_running
-    camera_url = "http://localhost/video/4"
+    
+    # Find available video channel
+    video_channel = find_available_video_channel()
+    if video_channel is None:
+        print("❌ No video channels found")
+        return
+    
+    camera_url = f"http://localhost/video/{video_channel}"
+    print(f"📹 Using video channel: {video_channel}")
     
     while stream_running:
         try:
