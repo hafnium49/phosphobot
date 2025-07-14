@@ -2,6 +2,9 @@ import cv2
 import requests  # type: ignore
 import numpy as np
 import mediapipe as mp  # type: ignore
+import threading
+import time
+from io import BytesIO
 
 # TODO: estimate depth using the stero camera
 
@@ -18,6 +21,11 @@ class HandTracker:
             min_tracking_confidence=0.7,
         )
         self.left_hand_z = 0
+        
+        # Video stream variables
+        self.latest_frame = None
+        self.stream_running = False
+        self.camera_url = "http://localhost:80/video/0"
 
     def calculate_hand_open_state(self, hand_landmarks):
         """Calculate hand open state based on thumb and finger tip distances."""
@@ -55,105 +63,228 @@ class HandTracker:
 
         return image
 
+    def fetch_video_stream(self):
+        """Fetch video frames from PhosphoBot API in a separate thread."""
+        print("🔗 Connecting to PhosphoBot video stream...")
+        
+        while self.stream_running:
+            try:
+                response = requests.get(self.camera_url, stream=True, timeout=10)
+                
+                if response.status_code != 200:
+                    print(f"❌ Video stream error: {response.status_code}")
+                    time.sleep(1)
+                    continue
+                
+                print("✅ Video stream connected!")
+                
+                # Parse the multipart MJPEG stream
+                bytes_data = b''
+                for chunk in response.iter_content(chunk_size=4096):
+                    if not self.stream_running:
+                        break
+                        
+                    bytes_data += chunk
+                    
+                    # Find frame boundaries in MJPEG stream
+                    # Look for --frame boundary or JPEG markers
+                    while True:
+                        start = bytes_data.find(b'\xff\xd8')  # JPEG start marker
+                        if start == -1:
+                            break
+                            
+                        end = bytes_data.find(b'\xff\xd9', start)  # JPEG end marker
+                        if end == -1:
+                            break
+                            
+                        # Extract JPEG frame
+                        jpg_data = bytes_data[start:end+2]
+                        bytes_data = bytes_data[end+2:]
+                        
+                        # Convert to OpenCV image
+                        try:
+                            nparr = np.frombuffer(jpg_data, np.uint8)
+                            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                            
+                            if frame is not None and frame.size > 0:
+                                self.latest_frame = frame
+                        except Exception as e:
+                            print(f"Frame decode error: {e}")
+                            continue
+                            
+                    # Keep only recent data to prevent buffer buildup
+                    if len(bytes_data) > 100000:  # 100KB limit
+                        bytes_data = bytes_data[-50000:]  # Keep last 50KB
+                            
+            except requests.RequestException as e:
+                if self.stream_running:  # Only print if we're still supposed to be running
+                    print(f"⚠️ Stream connection error: {e}")
+                    time.sleep(2)
+            except Exception as e:
+                print(f"❌ Stream processing error: {e}")
+                time.sleep(1)
+
     def track_hand(self):
-        """Open video capture and continuously track hand position."""
-        cap = cv2.VideoCapture(0)
+        """Track hands using PhosphoBot video stream."""
+        print("🎯 Starting hand tracking with PhosphoBot video stream...")
+        
+        # Start video stream in background thread
+        self.stream_running = True
+        stream_thread = threading.Thread(target=self.fetch_video_stream, daemon=True)
+        stream_thread.start()
+        
+        # Wait for first frame
+        print("⏳ Waiting for video frames...")
+        timeout = 10
+        start_time = time.time()
+        while self.latest_frame is None and time.time() - start_time < timeout:
+            time.sleep(0.1)
+            
+        if self.latest_frame is None:
+            print("❌ No video frames received. Check if PhosphoBot camera is working.")
+            return
+            
+        print("✅ Video stream ready! Starting hand tracking...")
+        print("🎮 Move your hands in front of the robot's camera")
+        print("⌨️ Press 'q' to quit")
 
-        while cap.isOpened():
-            success, image = cap.read()
-            if not success:
-                print("Ignoring empty camera frame.")
-                continue
+        try:
+            while self.stream_running:
+                if self.latest_frame is None:
+                    time.sleep(0.01)
+                    continue
+                    
+                # Work with current frame
+                image = self.latest_frame.copy()
 
-            # Flip the image horizontally
-            image = cv2.flip(image, 1)
+                # Flip the image horizontally for natural interaction
+                image = cv2.flip(image, 1)
 
-            # Convert the BGR image to RGB
-            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                # Convert the BGR image to RGB
+                image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-            # Process the image and find hands
-            results = self.hands.process(image_rgb)
+                # Process the image and find hands
+                results = self.hands.process(image_rgb)
 
-            # Reset left hand z
-            self.left_hand_z = 0
+                # Reset left hand z
+                self.left_hand_z = 0
 
-            # Draw hand landmarks and send position
-            if results.multi_hand_landmarks:
-                hand_data = {"rx": 0, "ry": 0, "rz": 0}
+                # Draw hand landmarks and send position
+                if results.multi_hand_landmarks:
+                    hand_data = {"rx": 0, "ry": 0, "rz": 0}
 
-                for hand_index, hand_landmarks in enumerate(
-                    results.multi_hand_landmarks
-                ):
-                    # Draw landmarks on the image
-                    self.mp_drawing.draw_landmarks(
-                        image, hand_landmarks, self.mp_hands.HAND_CONNECTIONS
-                    )
+                    for hand_index, hand_landmarks in enumerate(
+                        results.multi_hand_landmarks
+                    ):
+                        # Draw landmarks on the image
+                        self.mp_drawing.draw_landmarks(
+                            image, hand_landmarks, self.mp_hands.HAND_CONNECTIONS
+                        )
 
-                    # Extract hand position (using wrist as reference)
-                    wrist = hand_landmarks.landmark[self.mp_hands.HandLandmark.WRIST]
+                        # Extract hand position (using wrist as reference)
+                        wrist = hand_landmarks.landmark[self.mp_hands.HandLandmark.WRIST]
 
-                    # Identify hand side (uses handedness if available)
-                    if results.multi_handedness:
-                        handedness = results.multi_handedness[hand_index]
-                        if handedness.classification[0].label == "Left":
-                            hand_data["x"] = -wrist.y + 0.65
-                        else:
-                            hand_data["y"] = 0 - wrist.x + 0.525
-                            hand_data["z"] = 0 - wrist.y + 0.65
-                            hand_data["open"] = self.calculate_hand_open_state(
-                                hand_landmarks
+                        # Identify hand side (uses handedness if available)
+                        if results.multi_handedness:
+                            handedness = results.multi_handedness[hand_index]
+                            if handedness.classification[0].label == "Left":
+                                hand_data["x"] = -wrist.y + 0.65
+                            else:
+                                hand_data["y"] = 0 - wrist.x + 0.525
+                                hand_data["z"] = 0 - wrist.y + 0.65
+                                hand_data["open"] = self.calculate_hand_open_state(
+                                    hand_landmarks
+                                )
+
+                    # Send data to endpoint
+                    if (
+                        "x" in hand_data
+                        and "y" in hand_data
+                        and "z" in hand_data
+                        and "open" in hand_data
+                    ):
+                        try:
+                            self.add_hand_data_overlay(
+                                image,
+                                hand_data["x"],
+                                hand_data["y"],
+                                hand_data["z"],
+                                hand_data["open"],
                             )
 
-                # Send data to endpoint
-                if (
-                    "x" in hand_data
-                    and "y" in hand_data
-                    and "z" in hand_data
-                    and "open" in hand_data
-                ):
-                    try:
-                        self.add_hand_data_overlay(
-                            image,
-                            hand_data["x"],
-                            hand_data["y"],
-                            hand_data["z"],
-                            hand_data["open"],
-                        )
+                            requests.post(
+                                "http://localhost:80/move/absolute",
+                                json={
+                                    **hand_data,
+                                    "x": hand_data["x"] * 100,
+                                    "y": hand_data["y"] * 100,
+                                    "z": hand_data["z"] * 100,
+                                },
+                                timeout=0.2,  # Short timeout to prevent blocking
+                            )
+                        except requests.RequestException as e:
+                            print(f"Failed to send data: {e}")
+                    else:
+                        # Add status overlay when no complete hand data
+                        cv2.putText(image, "Show both hands for robot control", 
+                                  (20, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
 
-                        requests.post(
-                            "http://localhost:80/move/absolute",
-                            json={
-                                **hand_data,
-                                "x": hand_data["x"] * 100,
-                                "y": hand_data["y"] * 100,
-                                "z": hand_data["z"] * 100,
-                            },
-                            timeout=0.2,  # Short timeout to prevent blocking
-                        )
-                    except requests.RequestException as e:
-                        print(f"Failed to send data: {e}")
-                else:
-                    print("Missing hand data")
+                # Add stream info overlay
+                cv2.putText(image, "PhosphoBot Video Stream", 
+                          (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
 
-            # Display the image
-            cv2.imshow("Hand Tracking", image)
+                # Display the image
+                cv2.imshow("Hand Tracking - PhosphoBot Stream", image)
 
-            # Break loop on 'q' key press
-            if cv2.waitKey(5) & 0xFF == ord("q"):
-                break
-
-        # Clean up
-        cap.release()
-        cv2.destroyAllWindows()
+                # Break loop on 'q' key press
+                if cv2.waitKey(5) & 0xFF == ord("q"):
+                    break
+                    
+        except KeyboardInterrupt:
+            print("\n🛑 Hand tracking stopped by user")
+        except Exception as e:
+            print(f"❌ Hand tracking error: {e}")
+        finally:
+            # Clean up
+            self.stream_running = False
+            cv2.destroyAllWindows()
+            print("✅ Hand tracking stopped")
 
 
 def main():
-    # Initialize hand tracker
+    print("🚀 PHOSPHOBOT HAND TRACKING")
+    print("=" * 40)
+    print("📹 Using PhosphoBot video stream API")
+    print()
+    
+    # Test robot server connection
+    print("🔧 Testing robot server connection...")
     try:
-        requests.post("http://localhost:80/move/init")
+        response = requests.post("http://localhost:80/move/init", timeout=5)
+        if response.status_code == 200:
+            print("✅ Robot server connected successfully")
+            print(f"   Response: {response.json()}")
+        else:
+            print(f"⚠️ Robot server responded with status: {response.status_code}")
     except requests.RequestException as e:
-        print(f"Failed to connect to server: {e}")
+        print(f"❌ Failed to connect to robot server: {e}")
+        print("   Make sure PhosphoBot is running on localhost:80")
+        return
+    
+    # Test video stream availability
+    print("\n🔧 Testing video stream availability...")
+    try:
+        response = requests.get("http://localhost:80/video/0", stream=True, timeout=5)
+        if response.status_code == 200:
+            print("✅ Video stream is available")
+        else:
+            print(f"❌ Video stream error: {response.status_code}")
+            return
+    except requests.RequestException as e:
+        print(f"❌ Failed to connect to video stream: {e}")
+        return
 
+    print("\n🎯 Initializing hand tracker...")
     tracker = HandTracker()
     tracker.track_hand()
 
