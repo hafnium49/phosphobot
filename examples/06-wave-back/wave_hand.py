@@ -39,7 +39,7 @@ signal.signal(signal.SIGINT, signal_handler)
 def fetch_video_stream():
     """Fetch video frames from PhosphoBot API in a separate thread."""
     global latest_frame, stream_running
-    camera_url = "http://localhost:80/video/0"
+    camera_url = "http://localhost/video/4"
     
     while stream_running:
         try:
@@ -129,13 +129,17 @@ print()
 
 # Initialize robot
 try:
+    print("🔄 Initializing robot...")
     response = call_to_api("init")
-    print("✅ Robot initialized successfully")
+    print(f"✅ Robot initialized successfully: {response}")
 except Exception as e:
     print(f"❌ Failed to initialize robot: {e}")
+    import traceback
+    traceback.print_exc()
     sys.exit(1)
 
 # Start video stream
+print("🎥 Starting video stream...")
 stream_running = True
 stream_thread = threading.Thread(target=fetch_video_stream, daemon=True)
 stream_thread.start()
