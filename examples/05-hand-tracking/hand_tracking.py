@@ -25,7 +25,7 @@ class HandTracker:
         # Video stream variables
         self.latest_frame = None
         self.stream_running = False
-        self.camera_url = "http://localhost:80/video/0"
+        self.camera_url = "http://localhost:80/video/0"  # Use camera 0 which is available
 
     def calculate_hand_open_state(self, hand_landmarks):
         """Calculate hand open state based on thumb and finger tip distances."""
@@ -182,11 +182,11 @@ class HandTracker:
                     # Extract hand position (using wrist as reference)
                     wrist = hand_landmarks.landmark[self.mp_hands.HandLandmark.WRIST]
 
-                    # Calculate hand data from first detected hand
+                    # Calculate hand data from first detected hand  
                     hand_data = {
-                        "x": (-wrist.y + 0.5) * 100,  # Convert to robot coordinates
-                        "y": (0.5 - wrist.x) * 100,   # Convert to robot coordinates  
-                        "z": (0.7 - wrist.y) * 100,   # Convert to robot coordinates
+                        "x": (wrist.x - 0.5) * 200,    # Map to -100 to +100 range
+                        "y": (0.5 - wrist.y) * 200,    # Map to -100 to +100 range, inverted
+                        "z": 50 + (0.5 - wrist.y) * 100,  # Map to 0-100 range with offset
                         "open": self.calculate_hand_open_state(hand_landmarks)
                     }
 
@@ -204,16 +204,21 @@ class HandTracker:
                         response = requests.post(
                             "http://localhost:80/move/absolute",
                             json=hand_data,
-                            timeout=0.1,  # Very short timeout for responsiveness
+                            timeout=0.2,  # Short timeout for responsiveness
                         )
+                        
+                        # Add debug info
+                        debug_text = f"Sending: X={hand_data['x']:.1f} Y={hand_data['y']:.1f} Z={hand_data['z']:.1f}"
+                        cv2.putText(image, debug_text, 
+                                  (20, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
                         
                         # Add success indicator
                         if response.status_code == 200:
-                            cv2.putText(image, "ROBOT FOLLOWING", 
-                                      (20, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                            cv2.putText(image, "ROBOT FOLLOWING ✓", 
+                                      (20, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
                         else:
                             cv2.putText(image, f"Robot Error: {response.status_code}", 
-                                      (20, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                                      (20, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
                             
                     except requests.RequestException as e:
                         cv2.putText(image, f"Connection Error", 
