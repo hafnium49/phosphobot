@@ -51,14 +51,14 @@ class HandTracker:
     def add_hand_data_overlay(self, image, x, y, z, open):
         """Add overlay with hand tracking data."""
         # Prepare text
-        overlay_text = f"X: {x:.3f} " f"Y: {y:.3f} " f"Z: {z:.3f} " f"Open: {open:.2f}"
+        overlay_text = f"X: {x:.3f} Y: {y:.3f} Z: {z:.3f} Open: {open:.2f}"
 
         # Add background rectangle
-        cv2.rectangle(image, (10, 30), (550, 70), (255, 255, 255), -1)
+        cv2.rectangle(image, (10, 50), (550, 90), (255, 255, 255), -1)
 
         # Add text
         cv2.putText(
-            image, overlay_text, (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2
+            image, overlay_text, (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2
         )
 
         return image
@@ -171,63 +171,58 @@ class HandTracker:
 
                 # Draw hand landmarks and send position
                 if results.multi_hand_landmarks:
-                    hand_data = {"rx": 0, "ry": 0, "rz": 0}
+                    # Use the first detected hand for control
+                    hand_landmarks = results.multi_hand_landmarks[0]
+                    
+                    # Draw landmarks on the image
+                    self.mp_drawing.draw_landmarks(
+                        image, hand_landmarks, self.mp_hands.HAND_CONNECTIONS
+                    )
 
-                    for hand_index, hand_landmarks in enumerate(
-                        results.multi_hand_landmarks
-                    ):
-                        # Draw landmarks on the image
-                        self.mp_drawing.draw_landmarks(
-                            image, hand_landmarks, self.mp_hands.HAND_CONNECTIONS
+                    # Extract hand position (using wrist as reference)
+                    wrist = hand_landmarks.landmark[self.mp_hands.HandLandmark.WRIST]
+
+                    # Calculate hand data from first detected hand
+                    hand_data = {
+                        "x": (-wrist.y + 0.5) * 100,  # Convert to robot coordinates
+                        "y": (0.5 - wrist.x) * 100,   # Convert to robot coordinates  
+                        "z": (0.7 - wrist.y) * 100,   # Convert to robot coordinates
+                        "open": self.calculate_hand_open_state(hand_landmarks)
+                    }
+
+                    # Send data to robot
+                    try:
+                        self.add_hand_data_overlay(
+                            image,
+                            hand_data["x"]/100,  # Display normalized values
+                            hand_data["y"]/100,
+                            hand_data["z"]/100,
+                            hand_data["open"],
                         )
 
-                        # Extract hand position (using wrist as reference)
-                        wrist = hand_landmarks.landmark[self.mp_hands.HandLandmark.WRIST]
-
-                        # Identify hand side (uses handedness if available)
-                        if results.multi_handedness:
-                            handedness = results.multi_handedness[hand_index]
-                            if handedness.classification[0].label == "Left":
-                                hand_data["x"] = -wrist.y + 0.65
-                            else:
-                                hand_data["y"] = 0 - wrist.x + 0.525
-                                hand_data["z"] = 0 - wrist.y + 0.65
-                                hand_data["open"] = self.calculate_hand_open_state(
-                                    hand_landmarks
-                                )
-
-                    # Send data to endpoint
-                    if (
-                        "x" in hand_data
-                        and "y" in hand_data
-                        and "z" in hand_data
-                        and "open" in hand_data
-                    ):
-                        try:
-                            self.add_hand_data_overlay(
-                                image,
-                                hand_data["x"],
-                                hand_data["y"],
-                                hand_data["z"],
-                                hand_data["open"],
-                            )
-
-                            requests.post(
-                                "http://localhost:80/move/absolute",
-                                json={
-                                    **hand_data,
-                                    "x": hand_data["x"] * 100,
-                                    "y": hand_data["y"] * 100,
-                                    "z": hand_data["z"] * 100,
-                                },
-                                timeout=0.2,  # Short timeout to prevent blocking
-                            )
-                        except requests.RequestException as e:
-                            print(f"Failed to send data: {e}")
-                    else:
-                        # Add status overlay when no complete hand data
-                        cv2.putText(image, "Show both hands for robot control", 
-                                  (20, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                        # Send movement command to robot
+                        response = requests.post(
+                            "http://localhost:80/move/absolute",
+                            json=hand_data,
+                            timeout=0.1,  # Very short timeout for responsiveness
+                        )
+                        
+                        # Add success indicator
+                        if response.status_code == 200:
+                            cv2.putText(image, "ROBOT FOLLOWING", 
+                                      (20, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                        else:
+                            cv2.putText(image, f"Robot Error: {response.status_code}", 
+                                      (20, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                            
+                    except requests.RequestException as e:
+                        cv2.putText(image, f"Connection Error", 
+                                  (20, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                        print(f"Failed to send data: {e}")
+                else:
+                    # No hands detected
+                    cv2.putText(image, "Show your hand to control robot", 
+                              (20, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
 
                 # Add stream info overlay
                 cv2.putText(image, "PhosphoBot Video Stream", 
