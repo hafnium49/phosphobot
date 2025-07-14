@@ -1,4 +1,4 @@
-from modules.executor import execute_command
+from backend.modules.executor import execute_command
 
 execute_command({
     "action": "pick_and_place",
