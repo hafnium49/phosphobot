@@ -12,6 +12,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from threading import Thread
 
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
 from backend.modules.mic import record_audio
 from backend.modules.llm import get_llm_response
 from backend.modules.whisper_transcriber import transcribe_audio
