@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Single Arm SO-101 Test - Corrected Version
+Single Arm SO-101 Test - Legacy API with Dual Robot Support (Clean Version)
 
-Tests the corrected dual_so101_controller.py with proper API integration.
-This version uses the fixed controller that handles coordinate conversion,
-proper HTTP client, and single robot support.
+Tests direct API calls with robot_id parameter support for dual robot systems.
+This clean version includes the robot_id parameter fix to ensure proper robot targeting.
+Uses robot_id=0 by default (can be changed for testing different robots).
 """
 
 import time
@@ -77,9 +77,9 @@ def test_legacy_api():
     PI_IP = "127.0.0.1"
     PI_PORT = 80
     
-    def call_to_api(endpoint: str, data: dict = {}):
-        """Call PhosphoBot API using the same format as other working examples."""
-        response = requests.post(f"http://{PI_IP}:{PI_PORT}/move/{endpoint}", json=data)
+    def call_to_api(endpoint: str, data: dict = {}, robot_id: int = 0):
+        """Call PhosphoBot API with robot_id parameter for dual robot support."""
+        response = requests.post(f"http://{PI_IP}:{PI_PORT}/move/{endpoint}?robot_id={robot_id}", json=data)
         return response.json()
     
     try:
