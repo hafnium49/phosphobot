@@ -4,34 +4,38 @@
 During testing of Example 8 with dual SO-101 robots, **only the right arm (robot_id=1) was moving consistently**. The left arm (robot_id=0) appeared to receive commands but did not execute movements.
 
 ## **Root Cause Analysis**
-The PhosphoBot API requires a `robot_id` parameter to specify which robot should execute the command. The dual arm controller was missing this critical parameter in API calls.
+The PhosphoBot API requires a `robot_id` parameter to specify which robot should execute the command. However, this parameter must be passed as a **URL query parameter**, not in the JSON body.
 
 ### **Before Fix:**
 ```python
+# INCORRECT: robot_id in JSON body
 payload = {
     "x": position[0] * 100,
     "y": position[1] * 100, 
     "z": position[2] * 100,
-    "open": 0  # Missing robot_id!
+    "open": 0,
+    "robot_id": robot_id  # Wrong location!
 }
+response = session.post(f"{server_url}/move/absolute", json=payload)
 ```
 
 ### **After Fix:**
 ```python
+# CORRECT: robot_id as URL query parameter
 payload = {
     "x": position[0] * 100,
     "y": position[1] * 100,
     "z": position[2] * 100,
-    "open": 0,
-    "robot_id": robot_id  # CRITICAL: Specify which robot
+    "open": 0
 }
+response = session.post(f"{server_url}/move/absolute?robot_id={robot_id}", json=payload)
 ```
 
 ## **Files Modified**
-- `dual_so101_controller.py`: Added `robot_id` parameter to:
-  - `move_arm_absolute_pose()` function
-  - `move_arm_relative_pose()` function  
-  - `control_gripper()` function
+- `dual_so101_controller.py`: Updated to pass `robot_id` as URL query parameter in:
+  - `move_arm_absolute_pose()` function: `f"{server_url}/move/absolute?robot_id={robot_id}"`
+  - `move_arm_relative_pose()` function: `f"{server_url}/move/relative?robot_id={robot_id}"`
+  - `control_gripper()` function: `f"{server_url}/move/absolute?robot_id={robot_id}"`
 
 ## **Verification Tests**
 Created comprehensive test files to verify the fix:

@@ -55,13 +55,13 @@ python3 interactive_control.py
 2. **Coordinate System**: Fixed meter to centimeter conversion  
 3. **API Endpoints**: Disabled broken `/pose` endpoint, uses working endpoints
 4. **Error Handling**: Added proper exception handling for all operations
-5. **🚨 ROBOT ID BUG**: Added missing `robot_id` parameter to all API calls - **CRITICAL FIX!**
+5. **🚨 ROBOT ID BUG**: Fixed `robot_id` parameter placement - **CRITICAL FIX!**
 
 ### **Dual Robot Control Fixed:**
 - **Before**: Only one arm (usually right arm) would move, regardless of `robot_id` 
 - **After**: Both arms move independently when commanded
-- **Root Cause**: API calls were missing the `robot_id` parameter
-- **Solution**: Added `"robot_id": robot_id` to all movement and gripper commands
+- **Root Cause**: `robot_id` must be passed as URL query parameter, not in JSON body
+- **Solution**: Changed from `/move/absolute` to `/move/absolute?robot_id={robot_id}`
 
 ### **Single Robot Support Added:**
 - Created single robot versions of all major functionality
@@ -218,8 +218,9 @@ controller.move_arm_relative_pose(
 ### **Common Issues**
 
 **"Only one arm is moving"** 🚨 **FIXED**
-- **Previous Issue**: Missing `robot_id` in API calls caused only one arm to respond
-- **Solution**: Updated controller to include `robot_id` parameter in all commands
+- **Previous Issue**: `robot_id` parameter was missing from API calls or incorrectly placed in JSON body
+- **Root Cause**: PhosphoBot API requires `robot_id` as URL query parameter: `?robot_id={robot_id}`
+- **Solution**: Updated controller to pass `robot_id` in URL query string for all endpoints
 - **Verification**: Run `python3 visual_verification_test.py` to confirm both arms move independently
 
 **"Script hangs during initialization"**
