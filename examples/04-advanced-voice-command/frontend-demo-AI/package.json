@@ -7,13 +7,12 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "demo-Gr00t": "PYTHONPATH=.. python ../backend/ws_server_Gr00t.py",
-    "demo-ACT": "PYTHONPATH=.. python ../backend/ws_server_ACT.py",
-    "demo-replay": "PYTHONPATH=.. python ../backend/ws_server_replay.py"
-
+    "demo-Gr00t": "cd /home/hafnium/phosphobot && PYTHONPATH=/home/hafnium/phosphobot python examples/04-advanced-voice-command/backend/ws_server_Gr00t.py",
+    "demo-ACT": "cd /home/hafnium/phosphobot && PYTHONPATH=/home/hafnium/phosphobot python examples/04-advanced-voice-command/backend/ws_server_ACT.py",
+    "demo-replay": "cd /home/hafnium/phosphobot && PYTHONPATH=/home/hafnium/phosphobot python examples/04-advanced-voice-command/backend/ws_server_replay.py"
   },
   "dependencies": {
-    "next": "15.3.1",
+    "next": "^15.3.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tailwindcss": "^4.1.4"
@@ -23,6 +22,6 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "typescript": "^5"
+    "typescript": "^5.8.3"
   }
 }

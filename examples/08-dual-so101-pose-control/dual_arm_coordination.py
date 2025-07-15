@@ -55,18 +55,27 @@ class DualArmCoordinator:
         """
         
         def move_left():
-            self.controller.move_arm_absolute_pose(
-                robot_id=0, 
-                position=left_pose,
-                orientation=left_orientation
-            )
+            try:
+                self.controller.move_arm_absolute_pose(
+                    robot_id=0, 
+                    position=left_pose,
+                    orientation=left_orientation
+                )
+                print("✅ Left arm movement completed")
+            except Exception as e:
+                print(f"❌ Left arm movement failed: {e}")
         
         def move_right():
-            self.controller.move_arm_absolute_pose(
-                robot_id=1,
-                position=right_pose,
-                orientation=right_orientation
-            )
+            try:
+                self.controller.move_arm_absolute_pose(
+                    robot_id=1,
+                    position=right_pose,
+                    orientation=right_orientation
+                )
+                print("✅ Right arm movement completed")
+            except Exception as e:
+                print(f"❌ Right arm movement failed: {e}")
+                print("💡 This may fail if only one robot is connected")
         
         # Start movements in parallel
         left_thread = threading.Thread(target=move_left)
@@ -112,8 +121,8 @@ class DualArmCoordinator:
         
         # Phase 2: Pre-grasp with grippers open
         print("Phase 2: Opening grippers and moving to pre-grasp...")
-        self.controller.control_gripper(robot_id=0, open_command=1.0)
-        self.controller.control_gripper(robot_id=1, open_command=1.0)
+        self.controller.control_gripper(robot_id=0, gripper_value=1.0)
+        self.controller.control_gripper(robot_id=1, gripper_value=1.0)
         
         self.synchronized_movement(
             left_pose=[0.25, 0.15, 0.15],   # Left pre-grasp
@@ -131,8 +140,8 @@ class DualArmCoordinator:
         time.sleep(0.5)
         
         # Close grippers
-        self.controller.control_gripper(robot_id=0, open_command=0.0)
-        self.controller.control_gripper(robot_id=1, open_command=0.0)
+        self.controller.control_gripper(robot_id=0, gripper_value=0.0)
+        self.controller.control_gripper(robot_id=1, gripper_value=0.0)
         
         time.sleep(1)
         
@@ -162,8 +171,8 @@ class DualArmCoordinator:
         
         # Release objects
         print("Phase 7: Releasing objects...")
-        self.controller.control_gripper(robot_id=0, open_command=1.0)
-        self.controller.control_gripper(robot_id=1, open_command=1.0)
+        self.controller.control_gripper(robot_id=0, gripper_value=1.0)
+        self.controller.control_gripper(robot_id=1, gripper_value=1.0)
         
         time.sleep(1)
         
@@ -301,9 +310,25 @@ def main():
     # Initialize controller
     try:
         controller = DualSO101Controller()
+        
+        # Initialize robot
+        print("🔧 Initializing robot connection...")
+        result = controller.initialize_robot()
+        if result:
+            print(f"✅ Robot initialized: {result}")
+        else:
+            print("❌ Robot initialization failed")
+            return
+        
         coordinator = DualArmCoordinator(controller)
+        
+        print("⚠️  DUAL ROBOT REQUIRED: This example needs two SO-101 robots")
+        print("   If you only have one robot, use single_arm_basic.py instead")
+        
     except Exception as e:
         print(f"❌ Failed to initialize: {e}")
+        import traceback
+        traceback.print_exc()
         return
     
     try:

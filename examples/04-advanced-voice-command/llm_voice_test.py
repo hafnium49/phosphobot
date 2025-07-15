@@ -1,13 +1,13 @@
-from modules.mic import record_audio
-from modules.whisper_transcriber import transcribe_audio
-from modules.llm import get_llm_response
-from modules.tts import speak
+from backend.modules.mic import record_audio
+from backend.modules.whisper_transcriber import transcribe_audio
+from backend.modules.llm import get_llm_response
+from backend.modules.tts import speak_streaming
 
 def main():
     print("🎙️ Speak to Phosphobot... (say 'exit' to quit)")
 
     while True:
-        audio_path = record_audio(duration=4)
+        audio_path = record_audio()
         text = transcribe_audio(audio_path)
 
         print(f"\n📝 You said: {text}")
@@ -19,7 +19,7 @@ def main():
         result = get_llm_response(text)
 
         print(f"\n🤖 Reply: {result['reply']}")
-        speak(result["reply"], voice="Daniel")  # 👈 la voix de Phosphobot
+        speak_streaming(result["reply"], lambda word: print(f"Speaking: {word}"))  # 👈 la voix de Phosphobot
 
         print(f"📦 Command: {result['command']}\n")
 

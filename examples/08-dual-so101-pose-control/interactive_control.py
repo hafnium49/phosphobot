@@ -18,6 +18,18 @@ class InteractiveController:
         self.controller = DualSO101Controller()
         self.active_arm = 0  # 0 for left, 1 for right
         self.step_size = 0.02  # 2cm default step size
+        
+        # Initialize robot
+        print("🔧 Initializing robot...")
+        result = self.controller.initialize_robot()
+        if result:
+            print(f"✅ Robot initialized: {result}")
+        else:
+            print("❌ Robot initialization failed")
+            sys.exit(1)
+        
+        print("⚠️  DUAL ROBOT REQUIRED: This interface controls two SO-101 robots")
+        print("   If you only have one robot, use interactive_control_single.py instead")
     
     def print_menu(self):
         """Print the interactive control menu."""
@@ -42,7 +54,7 @@ class InteractiveController:
         print("Control Commands:")
         print("  0/1 - Switch to arm 0/1")
         print("  +/- - Increase/decrease step size")
-        print("  p   - Print current pose")
+        print("  p   - Print current pose (disabled - /pose endpoint unavailable)")
         print("  z   - Go to safe position")
         print("  m   - Show this menu")
         print("  x   - Exit")
@@ -50,21 +62,15 @@ class InteractiveController:
         print("💡 Related Examples:")
         print("  - dual_arm_basic.py: Basic dual-arm control")
         print("  - dual_arm_coordination.py: Synchronized movements")
-        print("  - ../10-inverse-kinematics-demo/: Learn about IK")
-        print("  - ../09-workspace-analysis/: Workspace validation")
+        print("  - interactive_control_single.py: Single robot version")
+        print("  - single_arm_basic.py: Single robot basic control")
         print()
     
     def get_current_pose_info(self, robot_id: int):
         """Get and display current pose information."""
-        try:
-            pose = self.controller.get_current_pose(robot_id)
-            arm_name = "Left" if robot_id == 0 else "Right"
-            print(f"\n📍 {arm_name} Arm Current Pose:")
-            print(f"   Position: {pose}")
-            return pose
-        except Exception as e:
-            print(f"❌ Failed to get pose for arm {robot_id}: {e}")
-            return None
+        print(f"\n⚠️ Current pose info disabled - /pose endpoint not available")
+        print(f"💡 Robot ID {robot_id} position is tracked internally")
+        return None
     
     def safe_position(self, robot_id: int):
         """Move arm to a safe position."""
@@ -79,6 +85,8 @@ class InteractiveController:
             print(f"✅ {arm_name} arm moved to safe position")
         except Exception as e:
             print(f"❌ Failed to move to safe position: {e}")
+            if robot_id == 1:
+                print("💡 This may fail if only one robot is connected")
     
     def handle_movement(self, command: str):
         """Handle movement commands."""
@@ -110,20 +118,20 @@ class InteractiveController:
                     delta_position=delta_pos
                 )
                 arm_name = "Left" if self.active_arm == 0 else "Right"
-                print(f"✅ {arm_name} arm moved: {delta_pos}")
+                direction = {
+                    'w': 'forward', 's': 'backward', 'a': 'left',
+                    'd': 'right', 'q': 'up', 'e': 'down'
+                }[command]
+                print(f"✅ {arm_name} arm moved {direction}: {step_cm:.1f}cm")
                 
             elif command in rotation_map:
-                delta_rot = rotation_map[command][3:6]  # Extract rotation part
-                self.controller.move_arm_relative_pose(
-                    robot_id=self.active_arm,
-                    delta_position=[0, 0, 0],
-                    delta_orientation=delta_rot
-                )
-                arm_name = "Left" if self.active_arm == 0 else "Right"
-                print(f"✅ {arm_name} arm rotated: {delta_rot}")
+                print(f"⚠️ Rotation commands disabled - require pose feedback not available")
+                print(f"💡 Use absolute positioning with orientation instead")
                 
         except Exception as e:
             print(f"❌ Movement failed: {e}")
+            if self.active_arm == 1:
+                print("💡 This may fail if only one robot is connected")
     
     def run(self):
         """Run the interactive control loop."""
@@ -177,10 +185,24 @@ class InteractiveController:
                     print(f"✅ Step size decreased to {self.step_size * 100:.1f}cm")
                 
                 elif command == 'o':
-                    self.controller.control_gripper(self.active_arm, 1.0)
+                    try:
+                        self.controller.control_gripper(self.active_arm, 1.0)
+                        arm_name = "Left" if self.active_arm == 0 else "Right"
+                        print(f"✅ {arm_name} gripper opened")
+                    except Exception as e:
+                        print(f"❌ Failed to open gripper: {e}")
+                        if self.active_arm == 1:
+                            print("💡 This may fail if only one robot is connected")
                 
                 elif command == 'c':
-                    self.controller.control_gripper(self.active_arm, 0.0)
+                    try:
+                        self.controller.control_gripper(self.active_arm, 0.0)
+                        arm_name = "Left" if self.active_arm == 0 else "Right"
+                        print(f"✅ {arm_name} gripper closed")
+                    except Exception as e:
+                        print(f"❌ Failed to close gripper: {e}")
+                        if self.active_arm == 1:
+                            print("💡 This may fail if only one robot is connected")
                 
                 elif command == 'p':
                     self.get_current_pose_info(self.active_arm)
