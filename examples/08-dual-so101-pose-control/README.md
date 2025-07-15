@@ -44,6 +44,8 @@ python3 interactive_control.py
 | `dual_arm_coordination.py` | ✅ **WORKING** | Advanced coordination | ✅ Works | ✅ **TESTED** |
 | `comprehensive_dual_arm_test.py` | ✅ **NEW** | Complete test suite | N/A | ✅ **TESTED** |
 | `dual_arm_dance_demo.py` | ✅ **NEW** | Choreographed demo | N/A | ✅ **TESTED** |
+| `test_robot_id_fix.py` | ✅ **NEW** | Robot ID fix verification | N/A | ✅ **VERIFIED** |
+| `visual_verification_test.py` | ✅ **NEW** | Sequential movement test | N/A | ✅ **VERIFIED** |
 | `interactive_control.py` | ⚠️ **HANGS** | Dual arm interface | ❌ Hangs | ❌ Hangs |
 
 ## 🔧 What Was Fixed
@@ -53,6 +55,13 @@ python3 interactive_control.py
 2. **Coordinate System**: Fixed meter to centimeter conversion  
 3. **API Endpoints**: Disabled broken `/pose` endpoint, uses working endpoints
 4. **Error Handling**: Added proper exception handling for all operations
+5. **🚨 ROBOT ID BUG**: Added missing `robot_id` parameter to all API calls - **CRITICAL FIX!**
+
+### **Dual Robot Control Fixed:**
+- **Before**: Only one arm (usually right arm) would move, regardless of `robot_id` 
+- **After**: Both arms move independently when commanded
+- **Root Cause**: API calls were missing the `robot_id` parameter
+- **Solution**: Added `"robot_id": robot_id` to all movement and gripper commands
 
 ### **Single Robot Support Added:**
 - Created single robot versions of all major functionality
@@ -207,6 +216,11 @@ controller.move_arm_relative_pose(
 ## 🛠️ Troubleshooting
 
 ### **Common Issues**
+
+**"Only one arm is moving"** 🚨 **FIXED**
+- **Previous Issue**: Missing `robot_id` in API calls caused only one arm to respond
+- **Solution**: Updated controller to include `robot_id` parameter in all commands
+- **Verification**: Run `python3 visual_verification_test.py` to confirm both arms move independently
 
 **"Script hangs during initialization"**
 - **Solution**: Use `single_arm_basic.py` or `dual_arm_basic.py`

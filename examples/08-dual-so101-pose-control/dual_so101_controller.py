@@ -179,7 +179,8 @@ class DualSO101Controller:
         try:
             # Use working relative endpoint format
             payload.update({
-                "open": 0  # Keep gripper state
+                "open": 0,  # Keep gripper state
+                "robot_id": robot_id  # CRITICAL: Specify which robot to move
             })
             
             response = self.session.post(
@@ -205,7 +206,8 @@ class DualSO101Controller:
             # Note: Since /pose endpoint doesn't work, we'll use a simple gripper command
             # This assumes the robot maintains its position when only changing gripper
             payload = {
-                "open": int(gripper_value)  # Convert to int: 0 = closed, 1 = open
+                "open": int(gripper_value),  # Convert to int: 0 = closed, 1 = open
+                "robot_id": robot_id  # CRITICAL: Specify which robot's gripper to control
             }
             
             response = self.session.post(f"{self.server_url}/move/absolute", json=payload)
