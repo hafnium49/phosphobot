@@ -125,7 +125,8 @@ class DualSO101Controller:
         try:
             # Use the working /move/absolute endpoint format
             payload.update({
-                "open": 0  # Keep gripper state, 0 = closed
+                "open": 0,  # Keep gripper state, 0 = closed
+                "robot_id": robot_id  # CRITICAL: Specify which robot to move
             })
             
             response = self.session.post(

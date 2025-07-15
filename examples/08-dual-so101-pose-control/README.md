@@ -16,13 +16,19 @@ python3 single_arm_basic.py
 python3 interactive_control_single.py
 ```
 
-### **Dual Robot Setup** ⚠️
+### **Dual Robot Setup** ✅
 ```bash
-# Works perfectly with single robot (simulates dual control)
+# Perfect coordination with two SO-101 robots
 python3 dual_arm_basic.py
 
-# Advanced coordination (may hang during initialization)
+# Advanced synchronized movements (tested successfully!)
 python3 dual_arm_coordination.py
+
+# Comprehensive testing and choreographed demo
+python3 comprehensive_dual_arm_test.py
+python3 dual_arm_dance_demo.py
+
+# Interactive control (initialization may hang)
 python3 interactive_control.py
 ```
 
@@ -34,8 +40,10 @@ python3 interactive_control.py
 | `single_arm_test_clean.py` | ✅ **WORKING** | API compatibility test | ✅ Perfect | N/A |
 | `single_arm_basic.py` | ✅ **WORKING** | Basic single robot demo | ✅ Perfect | N/A |
 | `interactive_control_single.py` | ✅ **WORKING** | Single robot interface | ✅ Perfect | N/A |
-| `dual_arm_basic.py` | ✅ **WORKING** | Basic dual arm demo | ✅ Works | ✅ Works |
-| `dual_arm_coordination.py` | ⚠️ **HANGS** | Advanced coordination | ❌ Hangs | ❌ Hangs |
+| `dual_arm_basic.py` | ✅ **WORKING** | Basic dual arm demo | ✅ Works | ✅ **TESTED** |
+| `dual_arm_coordination.py` | ✅ **WORKING** | Advanced coordination | ✅ Works | ✅ **TESTED** |
+| `comprehensive_dual_arm_test.py` | ✅ **NEW** | Complete test suite | N/A | ✅ **TESTED** |
+| `dual_arm_dance_demo.py` | ✅ **NEW** | Choreographed demo | N/A | ✅ **TESTED** |
 | `interactive_control.py` | ⚠️ **HANGS** | Dual arm interface | ❌ Hangs | ❌ Hangs |
 
 ## 🔧 What Was Fixed
