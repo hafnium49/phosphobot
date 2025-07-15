@@ -126,10 +126,11 @@ class DualSO101Controller:
             # Use the working /move/absolute endpoint format
             payload.update({
                 "open": 0  # Keep gripper state, 0 = closed
+                # Note: robot_id goes in URL query params, not JSON body
             })
             
             response = self.session.post(
-                f"{self.server_url}/move/absolute",
+                f"{self.server_url}/move/absolute?robot_id={robot_id}",
                 json=payload
             )
             response.raise_for_status()
@@ -179,10 +180,11 @@ class DualSO101Controller:
             # Use working relative endpoint format
             payload.update({
                 "open": 0  # Keep gripper state
+                # Note: robot_id goes in URL query params, not JSON body
             })
             
             response = self.session.post(
-                f"{self.server_url}/move/relative",
+                f"{self.server_url}/move/relative?robot_id={robot_id}",
                 json=payload
             )
             response.raise_for_status()
@@ -205,9 +207,10 @@ class DualSO101Controller:
             # This assumes the robot maintains its position when only changing gripper
             payload = {
                 "open": int(gripper_value)  # Convert to int: 0 = closed, 1 = open
+                # Note: robot_id goes in URL query params, not JSON body
             }
             
-            response = self.session.post(f"{self.server_url}/move/absolute", json=payload)
+            response = self.session.post(f"{self.server_url}/move/absolute?robot_id={robot_id}", json=payload)
             response.raise_for_status()
             state = "open" if gripper_value > 0.5 else "closed"
             print(f"✅ Arm {robot_id} gripper {state}")

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-Interactive Dual SO-101 Control
+Interactive SO-101 Control (Dual & Single Robot Support)
 
 This script provides an interactive command-line interface for controlling
-dual SO-101 robotic arms with real-time pose adjustments.
+SO-101 robotic arms with real-time pose adjustments.
+Supports both dual robot and single robot modes.
+Run with --single flag for single robot mode.
 """
 
 import sys
@@ -12,11 +14,12 @@ from dual_so101_controller import DualSO101Controller
 
 
 class InteractiveController:
-    """Interactive command-line controller for dual SO-101 arms."""
+    """Interactive command-line controller for SO-101 arms."""
     
-    def __init__(self):
+    def __init__(self, single_mode=False):
         self.controller = DualSO101Controller()
-        self.active_arm = 0  # 0 for left, 1 for right
+        self.single_mode = single_mode
+        self.active_arm = 0  # 0 for left, 1 for right (or only robot in single mode)
         self.step_size = 0.02  # 2cm default step size
         
         # Initialize robot
@@ -28,15 +31,24 @@ class InteractiveController:
             print("❌ Robot initialization failed")
             sys.exit(1)
         
-        print("⚠️  DUAL ROBOT REQUIRED: This interface controls two SO-101 robots")
-        print("   If you only have one robot, use interactive_control_single.py instead")
+        if not single_mode:
+            print("⚠️  DUAL ROBOT MODE: This interface controls two SO-101 robots")
+            print("   Use --single flag for single robot mode")
+        else:
+            print("🤖 SINGLE ROBOT MODE: Controlling one SO-101 robot")
     
     def print_menu(self):
         """Print the interactive control menu."""
-        arm_name = "Left" if self.active_arm == 0 else "Right"
-        print(f"\n🤖 Interactive Dual SO-101 Control")
-        print(f"================================")
-        print(f"Active Arm: {arm_name} (ID: {self.active_arm})")
+        if self.single_mode:
+            print(f"\n🤖 Interactive SO-101 Control (Single Robot)")
+            print(f"===========================================")
+            print(f"Robot ID: {self.active_arm}")
+        else:
+            arm_name = "Left" if self.active_arm == 0 else "Right"
+            print(f"\n🤖 Interactive Dual SO-101 Control")
+            print(f"================================")
+            print(f"Active Arm: {arm_name} (ID: {self.active_arm})")
+        
         print(f"Step Size: {self.step_size * 100:.1f}cm")
         print()
         print("Movement Commands:")
@@ -52,7 +64,8 @@ class InteractiveController:
         print("  c   - Close gripper")
         print()
         print("Control Commands:")
-        print("  0/1 - Switch to arm 0/1")
+        if not self.single_mode:
+            print("  0/1 - Switch to arm 0/1")
         print("  +/- - Increase/decrease step size")
         print("  p   - Print current pose (disabled - /pose endpoint unavailable)")
         print("  z   - Go to safe position")
@@ -60,10 +73,9 @@ class InteractiveController:
         print("  x   - Exit")
         print()
         print("💡 Related Examples:")
-        print("  - dual_arm_basic.py: Basic dual-arm control")
+        print("  - dual_arm_basic.py: Basic control (use --single for single robot)")
         print("  - dual_arm_coordination.py: Synchronized movements")
-        print("  - interactive_control_single.py: Single robot version")
-        print("  - single_arm_basic.py: Single robot basic control")
+        print("  - test_legacy_dual_robot.py: Legacy API tests")
         print()
     
     def get_current_pose_info(self, robot_id: int):
@@ -75,17 +87,25 @@ class InteractiveController:
     def safe_position(self, robot_id: int):
         """Move arm to a safe position."""
         try:
-            safe_pos = [0.25, 0.15 if robot_id == 0 else -0.15, 0.20]
+            if self.single_mode:
+                safe_pos = [0.25, 0.0, 0.20]  # Centered for single robot
+            else:
+                safe_pos = [0.25, 0.15 if robot_id == 0 else -0.15, 0.20]
+            
             self.controller.move_arm_absolute_pose(
                 robot_id=robot_id,
                 position=safe_pos,
                 orientation=[0, 0, 0]
             )
-            arm_name = "Left" if robot_id == 0 else "Right"
-            print(f"✅ {arm_name} arm moved to safe position")
+            
+            if self.single_mode:
+                print(f"✅ Robot moved to safe position")
+            else:
+                arm_name = "Left" if robot_id == 0 else "Right"
+                print(f"✅ {arm_name} arm moved to safe position")
         except Exception as e:
             print(f"❌ Failed to move to safe position: {e}")
-            if robot_id == 1:
+            if robot_id == 1 and not self.single_mode:
                 print("💡 This may fail if only one robot is connected")
     
     def handle_movement(self, command: str):
@@ -169,12 +189,18 @@ class InteractiveController:
                     self.print_menu()
                 
                 elif command == '0':
-                    self.active_arm = 0
-                    print("✅ Switched to Left arm (ID: 0)")
+                    if not self.single_mode:
+                        self.active_arm = 0
+                        print("✅ Switched to Left arm (ID: 0)")
+                    else:
+                        print("ℹ️ In single robot mode - only robot 0 available")
                 
                 elif command == '1':
-                    self.active_arm = 1
-                    print("✅ Switched to Right arm (ID: 1)")
+                    if not self.single_mode:
+                        self.active_arm = 1
+                        print("✅ Switched to Right arm (ID: 1)")
+                    else:
+                        print("⚠️ Single robot mode - robot 1 not available")
                 
                 elif command == '+':
                     self.step_size = min(0.05, self.step_size + 0.005)
@@ -233,7 +259,10 @@ class InteractiveController:
 def main():
     """Main function."""
     try:
-        interactive = InteractiveController()
+        # Check for single robot mode
+        single_mode = "--single" in sys.argv or "-s" in sys.argv
+        
+        interactive = InteractiveController(single_mode=single_mode)
         interactive.run()
     except Exception as e:
         print(f"❌ Failed to start interactive controller: {e}")
