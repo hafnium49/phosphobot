@@ -1,35 +1,36 @@
 # SO-101 Pose Control Examples
 
-This example demonstrates how to control SO-101 robotic arms using direct pose commands (position + orientation). **Updated with full API compatibility fixes and single robot support.**
+This example demonstrates how to control SO-101 robotic arms using direct pose commands (position + orientation). **Updated with consolidated single/dual robot support and full API compatibility fixes.**
 
 ## 🎯 Quick Start
 
-### **Single Robot Setup (Recommended)** ✅
+### **Single Robot Setup** ✅
 ```bash
-# Test the corrected controller
-python3 single_arm_test_clean.py
+# Basic movements and demos (use --single flag)
+python3 dual_arm_basic.py --single
 
-# Basic movements and demos  
-python3 single_arm_basic.py
+# Interactive manual control (use --single flag)
+python3 interactive_control.py --single
 
-# Interactive manual control
-python3 interactive_control_single.py
+# Legacy API testing
+python3 test_legacy_dual_robot.py
 ```
 
 ### **Dual Robot Setup** ✅
 ```bash
-# Perfect coordination with two SO-101 robots
+# Basic dual arm control
 python3 dual_arm_basic.py
 
 # Advanced synchronized movements (tested successfully!)
 python3 dual_arm_coordination.py
 
-# Comprehensive testing and choreographed demo
+# Interactive dual arm control
+python3 interactive_control.py
+
+# Comprehensive testing and demos
 python3 comprehensive_dual_arm_test.py
 python3 dual_arm_dance_demo.py
-
-# Interactive control (initialization may hang)
-python3 interactive_control.py
+python3 visual_verification_test.py
 ```
 
 ## 📋 Current Status
@@ -37,16 +38,14 @@ python3 interactive_control.py
 | File | Status | Description | Single Robot | Dual Robot |
 |------|--------|-------------|--------------|------------|
 | `dual_so101_controller.py` | ✅ **FIXED** | Core controller library | ✅ Works | ✅ Works |
-| `single_arm_test_clean.py` | ✅ **WORKING** | API compatibility test | ✅ Perfect | N/A |
-| `single_arm_basic.py` | ✅ **WORKING** | Basic single robot demo | ✅ Perfect | N/A |
-| `interactive_control_single.py` | ✅ **WORKING** | Single robot interface | ✅ Perfect | N/A |
-| `dual_arm_basic.py` | ✅ **WORKING** | Basic dual arm demo | ✅ Works | ✅ **TESTED** |
+| `dual_arm_basic.py` | ✅ **ENHANCED** | Basic demo with --single support | ✅ Perfect | ✅ **TESTED** |
+| `interactive_control.py` | ✅ **ENHANCED** | Interactive control with --single support | ✅ Perfect | ✅ **TESTED** |
 | `dual_arm_coordination.py` | ✅ **WORKING** | Advanced coordination | ✅ Works | ✅ **TESTED** |
-| `comprehensive_dual_arm_test.py` | ✅ **NEW** | Complete test suite | N/A | ✅ **TESTED** |
-| `dual_arm_dance_demo.py` | ✅ **NEW** | Choreographed demo | N/A | ✅ **TESTED** |
-| `test_robot_id_fix.py` | ✅ **NEW** | Robot ID fix verification | N/A | ✅ **VERIFIED** |
-| `visual_verification_test.py` | ✅ **NEW** | Sequential movement test | N/A | ✅ **VERIFIED** |
-| `interactive_control.py` | ⚠️ **HANGS** | Dual arm interface | ❌ Hangs | ❌ Hangs |
+| `comprehensive_dual_arm_test.py` | ✅ **WORKING** | Complete test suite | N/A | ✅ **TESTED** |
+| `dual_arm_dance_demo.py` | ✅ **WORKING** | Choreographed demo | N/A | ✅ **TESTED** |
+| `test_legacy_dual_robot.py` | ✅ **ENHANCED** | Legacy API with dual robot support | ✅ Works | ✅ **VERIFIED** |
+| `test_robot_id_fix.py` | ✅ **WORKING** | Robot ID fix verification | N/A | ✅ **VERIFIED** |
+| `visual_verification_test.py` | ✅ **WORKING** | Sequential movement test | N/A | ✅ **VERIFIED** |
 
 ## 🔧 What Was Fixed
 
