@@ -5,10 +5,10 @@ This script let's you control your robot using keyboard inputs.
 The robot arm is controlled using the following keys:
 - Arrow Up:    Move forward (increase Y)
 - Arrow Down:  Move backward (decrease Y)
-- Arrow Right: Move up (increase Z)
-- Arrow Left:  Move down (decrease Z)
-- A:           Move left (decrease X)
-- D:           Move right (increase X)
+- Arrow Right: Move right (increase X)
+- Arrow Left:  Move left (decrease X)
+- A:           Move up (increase Z)
+- D:           Move down (decrease Z)
 - Space:       Toggle open state
 - J:           Read joint positions
 
@@ -303,20 +303,20 @@ def get_char():
 def alternative_keyboard_control():
     """Alternative keyboard control using standard input."""
     logging.info("Using alternative keyboard input method...")
-    logging.info("Controls: w=forward, s=backward, a=up, d=down, j=read joints, space=toggle gripper, q=quit")
+    logging.info("Controls: w=forward, s=backward, a=up, d=down, q=left, e=right, j=read joints, space=toggle gripper, x=quit")
     
     try:
         while True:
             char = get_char().lower()
             
-            if char == 'q':
+            if char == 'x':
                 logging.info("Quitting...")
                 break
             elif char == ' ':
                 toggle_open_state()
             elif char == 'j':
                 display_joint_positions()
-            elif char in ['w', 's', 'a', 'd']:
+            elif char in ['w', 's', 'a', 'd', 'q', 'e']:
                 # Map characters to movements
                 delta_x, delta_y, delta_z = 0, 0, 0
                 if char == 'w':  # forward
@@ -327,6 +327,10 @@ def alternative_keyboard_control():
                     delta_z = STEP_SIZE
                 elif char == 'd':  # down
                     delta_z = -STEP_SIZE
+                elif char == 'q':  # left
+                    delta_x = -STEP_SIZE
+                elif char == 'e':  # right
+                    delta_x = STEP_SIZE
                 
                 # Send movement command
                 endpoint = f"{BASE_URL}move/relative?robot_id={ROBOT_ID}"
