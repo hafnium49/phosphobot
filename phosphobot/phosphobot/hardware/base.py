@@ -128,7 +128,9 @@ class BaseManipulator(BaseRobot):
         raise NotImplementedError("The robot enable torque must be implemented.")
 
     @abstractmethod
-    def write_motor_position(self, servo_id: int, units: int, **kwargs) -> None:
+    def write_motor_position(
+        self, servo_id: int, units: int, speed: float | None = None, **kwargs
+    ) -> None:
         """
         Move the motor to the specified position.
 
@@ -161,7 +163,7 @@ class BaseManipulator(BaseRobot):
         raise NotImplementedError("read_group_motor_position must be implemented.")
 
     def write_group_motor_position(
-        self, q_target: np.ndarray, enable_gripper: bool
+        self, q_target: np.ndarray, enable_gripper: bool, speed: float | None = None
     ) -> None:
         """
         Write the positions to the motors in the group.
@@ -667,7 +669,10 @@ class BaseManipulator(BaseRobot):
         return output_position
 
     def set_motors_positions(
-        self, q_target_rad: np.ndarray, enable_gripper: bool = False
+        self,
+        q_target_rad: np.ndarray,
+        enable_gripper: bool = False,
+        speed: float | None = None,
     ) -> None:
         """
         Write the positions to the motors.
@@ -686,7 +691,7 @@ class BaseManipulator(BaseRobot):
                 != BaseManipulator.write_group_motor_position.__qualname__
             ):
                 # Use the batched motor write if available
-                self.write_group_motor_position(q_target, enable_gripper)
+                self.write_group_motor_position(q_target, enable_gripper, speed)
             else:
                 # Otherwise loop through the motors
                 for i, servo_id in enumerate(self.actuated_joints):
@@ -695,7 +700,11 @@ class BaseManipulator(BaseRobot):
                         # We skip it
                         continue
                     # Write goal position
-                    self.write_motor_position(servo_id=servo_id, units=q_target[i])
+                    self.write_motor_position(
+                        servo_id=servo_id,
+                        units=q_target[i],
+                        speed=speed,
+                    )
 
         # Filter out the gripper_joint_index
         if not enable_gripper:
@@ -748,6 +757,7 @@ class BaseManipulator(BaseRobot):
         angles: List[float],
         unit: Literal["rad", "motor_units", "degrees"],
         joints_ids: Optional[List[int]] = None,
+        speed: float | None = None,
     ) -> None:
         """
         Move the robot's joints to the specified angles.
@@ -765,7 +775,9 @@ class BaseManipulator(BaseRobot):
                 # If the number of angles is equal to the number of motors, we set the angles
                 # to the motors
                 self.set_motors_positions(
-                    q_target_rad=np_angles_rad, enable_gripper=True
+                    q_target_rad=np_angles_rad,
+                    enable_gripper=True,
+                    speed=speed,
                 )
                 return
             else:
@@ -776,7 +788,9 @@ class BaseManipulator(BaseRobot):
                             angle, servo_id=self.SERVO_IDS[i]
                         )
                         self.write_motor_position(
-                            servo_id=self.SERVO_IDS[i], units=motor_units
+                            servo_id=self.SERVO_IDS[i],
+                            units=motor_units,
+                            speed=speed,
                         )
                     else:
                         raise HTTPException(
@@ -797,7 +811,11 @@ class BaseManipulator(BaseRobot):
                         detail=f"Joint ID {joint_id} is out of range for the robot.",
                     )
             # Write the joint positions
-            self.set_motors_positions(q_target_rad=np_angles_rad, enable_gripper=True)
+            self.set_motors_positions(
+                q_target_rad=np_angles_rad,
+                enable_gripper=True,
+                speed=speed,
+            )
 
     def write_gripper_command(self, command: float) -> None:
         """

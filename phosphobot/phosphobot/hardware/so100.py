@@ -210,7 +210,9 @@ class SO100Hardware(BaseManipulator):
             self.update_motor_errors()
             return None
 
-    def write_motor_position(self, servo_id: int, units: int, **kwargs) -> None:
+    def write_motor_position(
+        self, servo_id: int, units: int, speed: float | None = None, **kwargs
+    ) -> None:
         """
         Write a position to a Feetech servo.
         """
@@ -218,6 +220,12 @@ class SO100Hardware(BaseManipulator):
             return None
 
         try:
+            if speed is not None:
+                self.motors_bus.write(
+                    "Goal_Speed",
+                    values=[int(speed)],
+                    motor_names=self.servo_id_to_motor_name[servo_id],
+                )
             self.motors_bus.write(
                 "Goal_Position",
                 values=[units],
@@ -229,7 +237,7 @@ class SO100Hardware(BaseManipulator):
             self.update_motor_errors()
 
     def write_group_motor_position(
-        self, q_target: np.ndarray, enable_gripper: bool = True
+        self, q_target: np.ndarray, enable_gripper: bool = True, speed: float | None = None
     ) -> None:
         """
         Write a position to all motors of the robot.
@@ -245,6 +253,12 @@ class SO100Hardware(BaseManipulator):
             motor_names = motor_names[:-1]
 
         try:
+            if speed is not None:
+                self.motors_bus.write(
+                    "Goal_Speed",
+                    values=[int(speed)] * len(motor_names),
+                    motor_names=motor_names,
+                )
             self.motors_bus.write(
                 "Goal_Position", values=values, motor_names=motor_names
             )

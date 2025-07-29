@@ -685,7 +685,10 @@ async def write_joints(
 
     robot = cast(BaseManipulator, robot)
     robot.write_joint_positions(
-        angles=request.angles, unit=request.unit, joints_ids=request.joints_ids
+        angles=request.angles,
+        unit=request.unit,
+        joints_ids=request.joints_ids,
+        speed=request.speed,
     )
 
     return StatusResponse()

@@ -312,6 +312,10 @@ class JointsWriteRequest(BaseModel):
         description="If set, only set the joints with these ids. If None, set all joints."
         "Example: 'angles'=[1,1,1], 'joints_ids'=[0,1,2] will set the first 3 joints to 1 radian.",
     )
+    speed: float | None = Field(
+        None,
+        description="Optional speed for the movement. The unit depends on the underlying robot implementation.",
+    )
 
 
 class JointsReadResponse(BaseModel):

@@ -369,6 +369,7 @@ class RemotePhosphobot(BaseRobot):
         angles: list[float],
         unit: str = "rad",
         joints_ids: list[int] | None = None,
+        speed: float | None = None,
         **kwargs,
     ) -> None:
         """
@@ -385,7 +386,12 @@ class RemotePhosphobot(BaseRobot):
 
         self.client.post(
             "/joints/write",
-            json={"angles": angles, "unit": unit, "joints_ids": joints_ids},
+            json={
+                "angles": angles,
+                "unit": unit,
+                "joints_ids": joints_ids,
+                "speed": speed,
+            },
             params={"robot_id": self.robot_id},
         )
 

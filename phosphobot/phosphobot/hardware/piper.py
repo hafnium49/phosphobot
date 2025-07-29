@@ -219,7 +219,9 @@ class PiperHardware(BaseManipulator):
         # Not implemented
         return None
 
-    def write_motor_position(self, servo_id: int, units: int, **kwargs) -> None:
+    def write_motor_position(
+        self, servo_id: int, units: int, speed: float | None = None, **kwargs
+    ) -> None:
         """
         Move the motor to the specified position.
 
@@ -250,7 +252,7 @@ class PiperHardware(BaseManipulator):
         self.motors_bus.JointCtrl(*[int(q) for q in current_position])
 
     def write_group_motor_position(
-        self, q_target: np.ndarray, enable_gripper: bool
+        self, q_target: np.ndarray, enable_gripper: bool, speed: float | None = None
     ) -> None:
         # Move robot
         joints = q_target[self.actuated_joints].tolist()
