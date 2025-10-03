@@ -255,6 +255,17 @@ def serve(
                 embodiment_tag=args.embodiment_tag,
                 denoising_steps=args.denoising_steps,
             )
+
+            # Fix device mismatch: ensure all model components are on the same device
+            import torch
+            if torch.cuda.is_available():
+                device = torch.device('cuda:0')
+                policy.to(device)
+                # Force all submodules to the same device
+                for module in policy.modules():
+                    module.to(device)
+                logger.info(f"Model and all submodules moved to {device}")
+
             time_to_load = time.time() - start_time
 
             logger.info(f"Policy loaded after {time_to_load} seconds")
