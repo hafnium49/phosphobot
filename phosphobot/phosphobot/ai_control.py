@@ -12,6 +12,7 @@ from phosphobot.am.act import ACT
 from phosphobot.am.gr00t import Gr00tN1, Gr00tSpawnConfig
 from phosphobot.am.lerobot import LeRobotSpawnConfig
 from phosphobot.am.pi05 import Pi05, Pi05SpawnConfig
+from phosphobot.am.rl_paper_drag import RLPaperDrag, RLPaperDragSpawnConfig
 from phosphobot.am.smolvla import SmolVLA
 from phosphobot.camera import AllCameras
 from phosphobot.control_signal import AIControlSignal
@@ -146,12 +147,13 @@ async def setup_ai_control(
             detail="Session expired. Please log in again.",
         )
 
-    model_types: Dict[str, type[ACT | Gr00tN1 | Pi05 | SmolVLA]] = {
+    model_types: Dict[str, type[ACT | Gr00tN1 | Pi05 | SmolVLA | RLPaperDrag]] = {
         "gr00t": Gr00tN1,
         "ACT": ACT,
         "ACT_BBOX": ACT,
         "pi0.5": Pi05,
         "smolvla": SmolVLA,
+        "rl_paper_drag": RLPaperDrag,
     }
 
     try:
