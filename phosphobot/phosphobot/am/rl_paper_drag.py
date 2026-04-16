@@ -272,8 +272,14 @@ class RLPaperDrag(ActionModel):
     # -------------------- Observation + action --------------------
 
     def _build_observation_and_act(self, joint_pos: np.ndarray, paper_pose: np.ndarray,
-                                   dt: float) -> np.ndarray:
-        """Ported from RLPolicyController.compute_action (rl_policy_controller.py:192-317)."""
+                                   dt: float, noise: bool = True) -> np.ndarray:
+        """Ported from RLPolicyController.compute_action (rl_policy_controller.py:192-317).
+
+        Args:
+            noise: If True, add observation noise matching training distribution
+                (default True — matches RLPolicyController default). Tests pass
+                noise=False for deterministic parity.
+        """
         # 1. Relative joint pos/vel (finite diff for velocity)
         joint_pos_rel = joint_pos - self.default_joint_pos
         if self._prev_joint_pos is not None:
@@ -294,11 +300,9 @@ class RLPaperDrag(ActionModel):
         ref_err[2] = _wrap_angle(ref_err[2])
         joint_ref_err = ref_joints - joint_pos
 
-        # 3b. Observation noise matching training (deployment runs with noise=False,
-        # but kept here so the code path matches compute_action exactly if needed).
-        # Disabled by default; to re-enable, toggle the if-guard.
-        add_noise = False
-        if add_noise:
+        # 3b. Observation noise matching training (paper_drag_env_cfg.py).
+        # RLPolicyController defaults noise=True; we match that.
+        if noise:
             joint_pos_rel = joint_pos_rel + np.random.uniform(
                 -self.OBS_NOISE_JOINT_POS, self.OBS_NOISE_JOINT_POS, self.NUM_JOINTS)
             joint_vel = joint_vel + np.random.uniform(
@@ -367,11 +371,13 @@ class RLPaperDrag(ActionModel):
               - "state": np.ndarray shape (6,) — joint positions in radians
               - "paper_pose": np.ndarray shape (3,) — [x, y, theta]
               - "dt": float — control timestep (default 0.05)
+              - "noise": bool — inject obs noise matching training (default True)
         """
         joint_pos = np.asarray(inputs["state"], dtype=float)
         paper_pose = np.asarray(inputs["paper_pose"], dtype=float)
         dt = float(inputs.get("dt", 0.05))
-        targets = self._build_observation_and_act(joint_pos, paper_pose, dt)
+        noise = bool(inputs.get("noise", True))
+        targets = self._build_observation_and_act(joint_pos, paper_pose, dt, noise=noise)
         return targets.reshape(1, self.NUM_JOINTS)
 
     @classmethod
