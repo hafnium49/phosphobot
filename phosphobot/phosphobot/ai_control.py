@@ -116,15 +116,15 @@ async def setup_ai_control(
     robots: List[BaseManipulator],
     all_cameras: AllCameras,
     ai_control_signal_id: str,
-    model_type: Literal["gr00t", "ACT", "ACT_BBOX", "pi0.5", "smolvla"],
+    model_type: Literal["gr00t", "ACT", "ACT_BBOX", "pi0.5", "smolvla", "rl_paper_drag"],
     model_id: str = "PLB/GR00T-N1-lego-pickup-mono-2",
     cameras_keys_mapping: Optional[dict[str, int]] = None,
     init_connected_robots: bool = True,
     verify_cameras: bool = True,
     checkpoint: Optional[int] = None,
 ) -> Tuple[
-    Gr00tN1 | ACT | Pi05 | SmolVLA,
-    Gr00tSpawnConfig | Pi05SpawnConfig | LeRobotSpawnConfig,
+    Gr00tN1 | ACT | Pi05 | SmolVLA | RLPaperDrag,
+    Gr00tSpawnConfig | Pi05SpawnConfig | LeRobotSpawnConfig | RLPaperDragSpawnConfig,
     ServerInfoResponse,
 ]:
     """
@@ -170,6 +170,27 @@ async def setup_ai_control(
             status_code=400,
             detail=f"Model verification failed for {model_type}: {e}",
         )
+
+    # --- RLPaperDrag runs locally (no Modal cloud server) ---
+    if model_type == "rl_paper_drag":
+        model = RLPaperDrag(cfg=model_spawn_config)
+        stub_info = ServerInfoResponse(
+            server_id=0,
+            url="localhost",
+            port=0,
+            tcp_socket=("localhost", 0),
+            model_id=model_id,
+            timeout=0,
+        )
+        if init_connected_robots:
+            if len(robots) == 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No robot connected. Exiting AI control loop.",
+                )
+            for robot in robots:
+                await robot.move_to_initial_position(open_gripper=True)
+        return model, model_spawn_config, stub_info
 
     def sanitize(o: Any) -> object:
         if isinstance(o, float):
