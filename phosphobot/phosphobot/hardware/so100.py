@@ -207,12 +207,32 @@ class SO100Hardware(BaseManipulator):
             "torque_enabled": [bool(word) for word in words["Torque_Enable"]],
         }
 
-    def enable_torque(self) -> None:
+    def _torque_reads_back_as(self, enabled: bool) -> bool:
+        """
+        Read Torque_Enable from the bus (never from the cache) and compare.
+        """
+        torque_enabled, _ = self.read_torque_enabled(max_age_s=0)
+        if torque_enabled is None:
+            return False
+        if any(value != enabled for value in torque_enabled):
+            logger.warning(
+                f"Torque_Enable read back {torque_enabled}, wanted {enabled} on all servos"
+            )
+            return False
+        return True
+
+    def enable_torque(self) -> bool:
+        """
+        Enable torque and write the PID gains of the calibration.
+
+        Returns True only when Torque_Enable reads back as 1 on all six servos and
+        no write failed. False when the arm is off the bus (nothing was written).
+        """
         if not self.is_connected:
-            return None
+            return False
         if self.config is None:
             logger.warning("Robot config is not initialized. Cannot enable torque.")
-            return None
+            return False
 
         self._torque_enabled_cache = None
         try:
@@ -228,12 +248,18 @@ class SO100Hardware(BaseManipulator):
         except Exception as e:
             logger.warning(f"Error enabling torque: {e}")
             self.update_motor_errors()
-            return None
+            return False
+        return self._torque_reads_back_as(True)
 
-    def disable_torque(self) -> None:
-        # Disable torque
+    def disable_torque(self) -> bool:
+        """
+        Disable torque.
+
+        Returns True only when Torque_Enable reads back as 0 on all six servos.
+        False when the arm is off the bus (nothing was written).
+        """
         if not self.is_connected:
-            return None
+            return False
         self._torque_enabled_cache = None
         try:
             self.motors_bus.write("Torque_Enable", 0)
@@ -241,7 +267,8 @@ class SO100Hardware(BaseManipulator):
         except Exception as e:
             logger.warning(f"Error disabling torque: {e}")
             self.update_motor_errors()
-            return None
+            return False
+        return self._torque_reads_back_as(False)
 
     def _set_pid_gains_motors(
         self, servo_id: int, p_gain: int = 32, i_gain: int = 0, d_gain: int = 32
@@ -253,6 +280,9 @@ class SO100Hardware(BaseManipulator):
         :param p_gain: Proportional gain (0-255)
         :param i_gain: Integral gain (0-255)
         :param d_gain: Derivative gain (0-255)
+
+        Raises if the torque status cannot be read or a gain cannot be written:
+        the gains were then not set.
         """
         try:
             torque_status = self.motors_bus.read(
@@ -260,7 +290,7 @@ class SO100Hardware(BaseManipulator):
             )
         except Exception as e:
             logger.warning(f"Error reading torque status: {e}")
-            return
+            raise
 
         if torque_status.all() == 1:
             self.motors_bus.write(
@@ -338,12 +368,15 @@ class SO100Hardware(BaseManipulator):
             self.update_motor_errors()
             return None
 
-    def write_motor_position(self, servo_id: int, units: int, **kwargs: Any) -> None:
+    def write_motor_position(self, servo_id: int, units: int, **kwargs: Any) -> bool:
         """
         Write a position to a Feetech servo.
+
+        Returns True when the bus write was issued without error, False when it
+        was skipped (arm off the bus) or raised.
         """
         if not self.is_connected:
-            return None
+            return False
 
         try:
             self.motors_bus.write(
@@ -352,18 +385,23 @@ class SO100Hardware(BaseManipulator):
                 motor_names=self.servo_id_to_motor_name[servo_id],
             )
             self.motor_communication_errors = 0
+            return True
         except Exception as e:
             logger.warning(f"Error writing motor position: {e}")
             self.update_motor_errors()
+            return False
 
     def write_group_motor_position(
         self, q_target: np.ndarray, enable_gripper: bool = True
-    ) -> None:
+    ) -> bool:
         """
         Write a position to all motors of the robot.
+
+        Returns True when the bus write was issued without error, False when it
+        was skipped (arm off the bus) or raised.
         """
         if not self.is_connected:
-            return None
+            return False
 
         values = q_target.tolist()
         motor_names = list(self.motors.keys())
@@ -378,9 +416,11 @@ class SO100Hardware(BaseManipulator):
                 "Goal_Position", values=values, motor_names=motor_names
             )
             self.motor_communication_errors = 0
+            return True
         except Exception as e:
             logger.warning(f"Error writing motor position: {e}")
             self.update_motor_errors()
+            return False
 
     def read_group_motor_position(self) -> np.ndarray:
         """

@@ -87,6 +87,27 @@ signal_leader_follower = ControlSignal()
 signal_vr_control = ControlSignal()
 
 
+def _bus_write_or_refuse(done: Optional[bool], arm: Arm, failure: str) -> Optional[bool]:
+    """
+    Turn what a robot said about a bus operation into the `bus_write` field of the
+    response, or refuse: a request must not be answered 200 when the bus did not
+    do what was asked.
+
+    done: True (done), None (the robot class reports nothing: not a failure), or
+        False (skipped because the arm is off the bus, or failed).
+    """
+    if done is not False:
+        return done
+    if not arm.robot.is_connected:
+        if config.ONLY_SIMULATION:
+            # Nothing to write to: the simulation is the robot
+            return False
+        raise HTTPException(
+            status_code=503, detail=f"arm {arm.serial} is not on the bus"
+        )
+    raise HTTPException(status_code=502, detail=f"arm {arm.serial}: {failure}")
+
+
 @router.post(
     "/move/init",
     response_model=StatusResponse,
@@ -683,10 +704,24 @@ async def toggle_torque(
         )
 
     if request.torque_status:
-        robot.enable_torque()
+        done = robot.enable_torque()
     else:
-        robot.disable_torque()
-    return StatusResponse()
+        done = robot.disable_torque()
+
+    torque_enabled = None
+    if hasattr(robot, "read_torque_enabled"):
+        # The read-back of the toggle itself, a moment old
+        torque_enabled, _ = robot.read_torque_enabled()
+    bus_write = _bus_write_or_refuse(
+        done, arm, failure=f"Torque_Enable read back {torque_enabled}"
+    )
+
+    return StatusResponse(
+        robot_id=arm.robot_id,  # type: ignore[call-arg]
+        serial=arm.serial,  # type: ignore[call-arg]
+        bus_write=bus_write,  # type: ignore[call-arg]
+        torque_enabled=torque_enabled,  # type: ignore[call-arg]
+    )
 
 
 @router.post(
@@ -802,7 +837,7 @@ async def read_joints_raw(
     return JointsReadRawResponse(
         robot_id=arm.robot_id,
         serial=arm.serial,
-        servo_ids=list(robot.SERVO_IDS),
+        servo_ids=list(getattr(robot, "SERVO_IDS")),
         read_unix_s=read_unix_s,
         read_age_ms=(time.monotonic() - read_started) * 1000,
         **raw,
@@ -830,11 +865,16 @@ async def write_joints(
         )
 
     robot = cast(BaseManipulator, robot)
-    robot.write_joint_positions(
+    done = robot.write_joint_positions(
         angles=request.angles, unit=request.unit, joints_ids=request.joints_ids
     )
+    bus_write = _bus_write_or_refuse(done, arm, failure="bus write failed")
 
-    return StatusResponse()
+    return StatusResponse(
+        robot_id=arm.robot_id,  # type: ignore[call-arg]
+        serial=arm.serial,  # type: ignore[call-arg]
+        bus_write=bus_write,  # type: ignore[call-arg]
+    )
 
 
 @router.post(

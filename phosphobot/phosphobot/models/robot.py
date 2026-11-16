@@ -28,28 +28,28 @@ class RobotConfigStatus(BaseModel):
     device_name: Optional[str]
     temperature: Optional[List[Temperature]] = None
     robot_id: Optional[int] = Field(
-        None,
+        default=None,
         description="The robot_id that addresses this robot now. It is the position in the server's list of robots and changes when that list does: address by serial where one exists.",
     )
     serial: Optional[str] = Field(
-        None, description="Serial of the robot. Same value as device_name."
+        default=None, description="Serial of the robot. Same value as device_name."
     )
     bus_connected: Optional[bool] = Field(
-        None, description="Whether the robot is on its bus right now."
+        default=None, description="Whether the robot is on its bus right now."
     )
     readback_source: Optional[Literal["hardware", "simulation"]] = Field(
-        None,
+        default=None,
         description="Where a joints read would take the positions from right now.",
     )
     torque_enabled: Optional[List[bool]] = Field(
-        None,
+        default=None,
         description="Torque_Enable of each servo as read from the bus, in servo order. None if the robot is off the bus or the read failed.",
     )
     torque_age_ms: Optional[float] = Field(
-        None, description="Age of torque_enabled in milliseconds."
+        default=None, description="Age of torque_enabled in milliseconds."
     )
     status_unix_s: Optional[float] = Field(
-        None, description="Unix time at which this status was taken."
+        default=None, description="Unix time at which this status was taken."
     )
 
 
@@ -61,9 +61,12 @@ class BaseRobot(ABC):
     @abstractmethod
     def set_motors_positions(
         self, q_target_rad: np.ndarray, enable_gripper: bool = False
-    ) -> None:
+    ) -> Optional[bool]:
         """
         Set the motor positions of the robot in radians.
+
+        May return what became of the write (True done, False skipped or failed);
+        None means the robot class reports nothing.
         """
         raise NotImplementedError
 
@@ -117,17 +120,19 @@ class BaseRobot(ABC):
         """
         pass
 
-    def enable_torque(self) -> None:
+    def enable_torque(self) -> Optional[bool]:
         """
         Enable the torque of the robot.
+        A robot class that checks the result returns True or False.
         """
-        pass
+        return None
 
-    def disable_torque(self) -> None:
+    def disable_torque(self) -> Optional[bool]:
         """
         Disable the torque of the robot.
+        A robot class that checks the result returns True or False.
         """
-        pass
+        return None
 
     @abstractmethod
     async def move_robot_absolute(

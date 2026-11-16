@@ -56,7 +56,7 @@ class ServerStatus(BaseModel):
         ..., description="Port of the phosphobot server", examples=[80, 8020, 8021]
     )
     truthful_api: int = Field(
-        1,
+        default=1,
         description="Version of the truthful command API: responses name the arm that answered, the source and the age of what they report; moving endpoints refuse a request without robot_id or serial.",
     )
 
@@ -361,7 +361,7 @@ class JointsReadResponse(BaseModel):
         description="The unit of the angles. Defaults to radian.",
     )
     robot_id: int = Field(..., description="The robot that answered.")
-    serial: Optional[str] = Field(None, description="Serial of that robot.")
+    serial: Optional[str] = Field(default=None, description="Serial of that robot.")
     source: Literal["hardware", "simulation"] = Field(
         ...,
         description="'hardware' only if the angles were read from the bus during this request. 'simulation' otherwise (source 'sim' requested, robot moving, or only-simulation mode).",
@@ -370,18 +370,18 @@ class JointsReadResponse(BaseModel):
         ..., description="Whether the robot is on its bus right now."
     )
     read_unix_s: Optional[float] = Field(
-        None, description="Unix time of the bus read. None for simulation."
+        default=None, description="Unix time of the bus read. None for simulation."
     )
     read_age_ms: Optional[float] = Field(
-        None,
+        default=None,
         description="Age of the bus read when this response was built, in milliseconds. None for simulation.",
     )
     torque_enabled: Optional[List[bool]] = Field(
-        None,
+        default=None,
         description="Torque_Enable of each servo as read from the bus, in servo order. None if the robot is off the bus or the read failed.",
     )
     torque_age_ms: Optional[float] = Field(
-        None, description="Age of torque_enabled in milliseconds."
+        default=None, description="Age of torque_enabled in milliseconds."
     )
 
 
@@ -391,7 +391,7 @@ class JointsReadRawResponse(BaseModel):
     """
 
     robot_id: int = Field(..., description="The robot that answered.")
-    serial: Optional[str] = Field(None, description="Serial of that robot.")
+    serial: Optional[str] = Field(default=None, description="Serial of that robot.")
     servo_ids: List[int] = Field(
         ..., description="Servo ids, in the order of the lists below."
     )
@@ -421,10 +421,10 @@ class TorqueReadResponse(BaseModel):
         ...,
         description="A list of length 6, with the current torque of each joint, in servo order. From hardware, these are the raw Present_Current register values.",
     )
-    robot_id: Optional[int] = Field(None, description="The robot that answered.")
-    serial: Optional[str] = Field(None, description="Serial of that robot.")
+    robot_id: Optional[int] = Field(default=None, description="The robot that answered.")
+    serial: Optional[str] = Field(default=None, description="Serial of that robot.")
     source: Optional[Literal["hardware", "simulation"]] = Field(
-        None,
+        default=None,
         description="'hardware' if the values were read from the servos during this request, 'simulation' in only-simulation mode.",
     )
 

@@ -94,18 +94,24 @@ class BaseManipulator(BaseRobot):
     initial_position: Optional[np.ndarray] = None
 
     @abstractmethod
-    def enable_torque(self) -> None:
+    def enable_torque(self) -> Optional[bool]:
         """
         Enable all motor torque.
+
+        A robot class that checks the result returns True or False; None means
+        the class reports nothing.
 
         raise: Exception if the routine has not been implemented
         """
         raise NotImplementedError("The robot enable torque must be implemented.")
 
     @abstractmethod
-    def disable_torque(self) -> None:
+    def disable_torque(self) -> Optional[bool]:
         """
         Disable all motor torque.
+
+        A robot class that checks the result returns True or False; None means
+        the class reports nothing.
 
         raise: Exception if the routine has not been implemented
         """
@@ -150,9 +156,14 @@ class BaseManipulator(BaseRobot):
         )
 
     @abstractmethod
-    def write_motor_position(self, servo_id: int, units: int, **kwargs: Any) -> None:
+    def write_motor_position(
+        self, servo_id: int, units: int, **kwargs: Any
+    ) -> Optional[bool]:
         """
         Move the motor to the specified position.
+
+        A robot class that knows returns True when the write was issued, False
+        when it was skipped or failed; None means the class reports nothing.
 
         Args:
             servo_id: The ID of the motor to move.
@@ -184,9 +195,11 @@ class BaseManipulator(BaseRobot):
 
     def write_group_motor_position(
         self, q_target: np.ndarray, enable_gripper: bool
-    ) -> None:
+    ) -> Optional[bool]:
         """
         Write the positions to the motors in the group.
+
+        Same return convention as write_motor_position.
         """
         raise NotImplementedError("write_group_motor_position must be implemented.")
 
@@ -764,7 +777,7 @@ class BaseManipulator(BaseRobot):
 
     def set_motors_positions(
         self, q_target_rad: np.ndarray, enable_gripper: bool = False
-    ) -> None:
+    ) -> Optional[bool]:
         """
         Write the positions to the motors.
 
@@ -774,7 +787,14 @@ class BaseManipulator(BaseRobot):
         This does not control the gripper.
 
         q_target_rad is in radians.
+
+        Returns:
+            What became of the write to the motors:
+            - False: it was skipped (robot not connected), or a write reported False
+            - True: every write reported True
+            - None: the robot class reports nothing about its writes. Not a failure.
         """
+        bus_write: Optional[bool] = False
         if self.is_connected:
             q_target = self._radians_vec_to_motor_units(q_target_rad)
             if (
@@ -782,17 +802,21 @@ class BaseManipulator(BaseRobot):
                 != BaseManipulator.write_group_motor_position.__qualname__
             ):
                 # Use the batched motor write if available
-                self.write_group_motor_position(q_target, enable_gripper)
+                bus_write = self.write_group_motor_position(q_target, enable_gripper)
             else:
                 # Otherwise loop through the motors
+                writes: List[Optional[bool]] = []
                 for i, servo_id in enumerate(self.actuated_joints):
                     if servo_id == self.gripper_servo_id and not enable_gripper:
                         # The gripper is not controlled by the motors
                         # We skip it
                         continue
                     # Write goal position
-                    self.write_motor_position(servo_id=servo_id, units=q_target[i])
+                    writes.append(
+                        self.write_motor_position(servo_id=servo_id, units=q_target[i])
+                    )
                     time.sleep(0.01)
+                bus_write = self._summarize_writes(writes)
 
         # Filter out the gripper_joint_index
         if not enable_gripper:
@@ -813,6 +837,20 @@ class BaseManipulator(BaseRobot):
         )
         # Update the simulation
         self.sim.step()
+
+        return bus_write
+
+    @staticmethod
+    def _summarize_writes(writes: List[Optional[bool]]) -> Optional[bool]:
+        """
+        One result for several motor writes: False if any is False, None if any
+        reports nothing (see set_motors_positions), else True.
+        """
+        if any(write is False for write in writes):
+            return False
+        if any(write is None for write in writes):
+            return None
+        return True
 
     def read_gripper_command(self) -> float:
         """
@@ -847,14 +885,25 @@ class BaseManipulator(BaseRobot):
         joints_ids: Optional[List[int]] = None,
         min_value: Optional[float] = None,
         max_value: Optional[float] = None,
-    ) -> None:
+    ) -> Optional[bool]:
         """
         Move the robot's joints to the specified angles.
+
+        joints_ids is refused: it never worked (the angles of the listed joints
+        were written as if they were the first joints of the robot).
+
+        Returns:
+            What became of the write to the motors, as set_motors_positions.
         """
+        if joints_ids is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="joints_ids is not supported when writing joint positions. Send the angles of all joints.",
+            )
 
         # Convert to np and radians
         np_angles_rad = np.array(angles)
-        if unit == "deg":
+        if unit in ("deg", "degrees"):
             np_angles_rad = np.deg2rad(np_angles_rad)
         elif unit == "motor_units":
             np_angles_rad = self._units_vec_to_radians(np_angles_rad)
@@ -879,44 +928,31 @@ class BaseManipulator(BaseRobot):
                 detail=f"Angles contain NaN or infinite values, or are out of bounds, stopping to prevent damage: {np_angles_rad}",
             )
 
-        if joints_ids is None:
-            if len(np_angles_rad) == len(self.SERVO_IDS):
-                # If the number of angles is equal to the number of motors, we set the angles
-                # to the motors
-                self.set_motors_positions(
-                    q_target_rad=np_angles_rad, enable_gripper=True
-                )
-                return
-            else:
-                # Iterate over the angles and set the corresponding joint positions
-                for i, angle in enumerate(np_angles_rad):
-                    if i < len(self.SERVO_IDS):
-                        motor_units = self._radians_to_motor_units(
-                            angle, servo_id=self.SERVO_IDS[i]
-                        )
-                        self.write_motor_position(
-                            servo_id=self.SERVO_IDS[i], units=motor_units
-                        )
-                    else:
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"Joint ID {i} is out of range for the robot.",
-                        )
+        if len(np_angles_rad) == len(self.SERVO_IDS):
+            # If the number of angles is equal to the number of motors, we set the angles
+            # to the motors
+            return self.set_motors_positions(
+                q_target_rad=np_angles_rad, enable_gripper=True
+            )
 
-        else:
-            # If we have joint ids, we get the current joint positions and edit the specified joints
-            current_joint_positions = self.read_joints_position(unit=unit)
-            for i, joint_id in enumerate(joints_ids):
-                if joint_id in self.SERVO_IDS:
-                    index = self.SERVO_IDS.index(joint_id)
-                    current_joint_positions[index] = angles[i]
-                else:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Joint ID {joint_id} is out of range for the robot.",
+        # Iterate over the angles and set the corresponding joint positions
+        writes: List[Optional[bool]] = []
+        for i, angle in enumerate(np_angles_rad):
+            if i < len(self.SERVO_IDS):
+                motor_units = self._radians_to_motor_units(
+                    angle, servo_id=self.SERVO_IDS[i]
+                )
+                writes.append(
+                    self.write_motor_position(
+                        servo_id=self.SERVO_IDS[i], units=motor_units
                     )
-            # Write the joint positions
-            self.set_motors_positions(q_target_rad=np_angles_rad, enable_gripper=True)
+                )
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Joint ID {i} is out of range for the robot.",
+                )
+        return self._summarize_writes(writes)
 
     def write_gripper_command(self, command: float) -> None:
         """
