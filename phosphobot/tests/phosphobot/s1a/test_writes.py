@@ -120,3 +120,9 @@ def test_only_simulation_write_is_still_200(client, arms, only_simulation):
     assert r.status_code == 200 and r.json()["bus_write"] is False
     r = client.post("/torque/toggle", params=R1, json=ON)
     assert r.status_code == 200 and r.json()["bus_write"] is False
+
+
+def test_write_of_no_angles_does_not_claim_a_bus_write(client, arms):
+    r = client.post("/joints/write", params=R1, json={"angles": [], "unit": "rad"})
+    assert r.status_code == 200 and r.json()["bus_write"] is None
+    assert arms[1].motors_bus.calls == []

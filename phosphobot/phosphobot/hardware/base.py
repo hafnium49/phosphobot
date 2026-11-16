@@ -844,11 +844,11 @@ class BaseManipulator(BaseRobot):
     def _summarize_writes(writes: List[Optional[bool]]) -> Optional[bool]:
         """
         One result for several motor writes: False if any is False, None if any
-        reports nothing (see set_motors_positions), else True.
+        reports nothing (see set_motors_positions) or there was no write, else True.
         """
         if any(write is False for write in writes):
             return False
-        if any(write is None for write in writes):
+        if not writes or any(write is None for write in writes):
             return None
         return True
 
