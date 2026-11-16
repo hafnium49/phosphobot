@@ -14,6 +14,19 @@ def test_no_test_can_scan_ports():
         serial.tools.list_ports.comports()
 
 
+def test_no_test_can_connect_to_the_rig_ports():
+    import socket
+
+    # Checked first: with no guard in place this test must not try to connect
+    assert socket.socket.connect.__name__ == "guarded_connect"
+    for port in (8080, 5570, 5571):
+        with pytest.raises(AssertionError):
+            socket.create_connection(("127.0.0.1", port), timeout=1)
+        with socket.socket() as sock:
+            with pytest.raises(AssertionError):
+                sock.connect_ex(("localhost", port))
+
+
 def test_no_test_can_write_a_calibration_file(arms):
     with pytest.raises(AssertionError):
         BaseRobotConfig.save_local(arms[0].config, serial_id="5A68011258")
