@@ -212,3 +212,37 @@ def test_failed_read_of_one_servo_is_nan_not_zero(arms):
     arm.read_motor_position = lambda servo_id, **kwargs: None if servo_id == 2 else 7
     positions = arm.read_joints_position(unit="motor_units", joints_ids=[1, 2, 3])
     assert positions[0] == 7 and np.isnan(positions[1]) and positions[2] == 7
+
+
+def test_read_age_is_taken_when_the_response_is_built(client, arms):
+    import time
+
+    bus = arms[1].motors_bus
+    real_read = bus.read
+
+    def slow_torque_read(data_name, motor_names=None):
+        if data_name == "Torque_Enable":
+            time.sleep(0.2)
+        return real_read(data_name, motor_names)
+
+    bus.read = slow_torque_read
+    b = client.post("/joints/read", params=R1).json()
+    # The positions were read before the torque: they are that much older
+    assert b["read_age_ms"] >= 190
+    assert abs((time.time() - b["read_unix_s"]) * 1000 - b["read_age_ms"]) < 100
+
+
+def test_other_reads_name_the_arm_that_answered(client, arms):
+    for path in ("/voltage/read", "/temperature/read"):
+        b = client.post(path, params={"serial": "5A68009540"}).json()
+        assert (b["robot_id"], b["serial"]) == (1, "5A68009540"), path
+    b = client.post("/voltage/read").json()
+    assert (b["robot_id"], b["serial"]) == (0, "5A68011258")
+    assert b["current_voltage"] == [12.0] * 6
+    b = client.post(
+        "/end-effector/read", params=R1, json={"only_gripper": True, "sync": False}
+    ).json()
+    assert (b["robot_id"], b["serial"]) == (1, "5A68009540")
+    arms[1].initial_position = arms[1].initial_orientation_rad = [0.0, 0.0, 0.0]
+    b = client.post("/end-effector/read", params=R1).json()
+    assert (b["robot_id"], b["serial"]) == (1, "5A68009540") and b["x"] is not None

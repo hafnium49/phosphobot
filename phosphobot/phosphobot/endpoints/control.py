@@ -541,6 +541,8 @@ async def end_effector_read(
             ry=None,
             rz=None,
             open=robot.closing_gripper_value,
+            robot_id=arm.robot_id,
+            serial=arm.serial,
         )
 
     initial_position = getattr(robot, "initial_position", None)
@@ -567,7 +569,17 @@ async def end_effector_read(
     ry = np.rad2deg(ry)
     rz = np.rad2deg(rz)
 
-    return EndEffectorPosition(x=x, y=y, z=z, rx=rx, ry=ry, rz=rz, open=open_status)
+    return EndEffectorPosition(
+        x=x,
+        y=y,
+        z=z,
+        rx=rx,
+        ry=ry,
+        rz=rz,
+        open=open_status,
+        robot_id=arm.robot_id,
+        serial=arm.serial,
+    )
 
 
 @router.post(
@@ -592,6 +604,8 @@ async def read_voltage(
     voltage = robot.current_voltage()
     return VoltageReadResponse(
         current_voltage=voltage.tolist() if voltage is not None else None,
+        robot_id=arm.robot_id,
+        serial=arm.serial,
     )
 
 
@@ -618,6 +632,8 @@ async def read_temperature(
 
     return TemperatureReadResponse(
         current_max_Temperature=temperature,
+        robot_id=arm.robot_id,
+        serial=arm.serial,
     )
 
 
@@ -779,8 +795,7 @@ async def read_joints(
         unit=request.unit, joints_ids=request.joints_ids, source=request.source
     )
 
-    read_unix_s: Optional[float] = None
-    read_age_ms: Optional[float] = None
+    read_monotonic: Optional[float] = None
     if from_bus:
         if np.isnan(current_units_position).any():
             raise HTTPException(
@@ -790,13 +805,18 @@ async def read_joints(
         read_monotonic = getattr(robot, "last_position_read_monotonic", None)
         if read_monotonic is None or read_monotonic < read_started:
             read_monotonic = read_started
-        read_age_s = time.monotonic() - read_monotonic
-        read_unix_s = time.time() - read_age_s
-        read_age_ms = read_age_s * 1000
 
     torque_enabled, torque_age_s = None, None
     if hasattr(robot, "read_torque_enabled"):
         torque_enabled, torque_age_s = robot.read_torque_enabled()
+
+    # The ages are those at the time the response is built: after the torque read
+    read_unix_s: Optional[float] = None
+    read_age_ms: Optional[float] = None
+    if read_monotonic is not None:
+        read_age_s = time.monotonic() - read_monotonic
+        read_unix_s = time.time() - read_age_s
+        read_age_ms = read_age_s * 1000
 
     # Replace NaN values with None and convert to list
     current_units_position = [

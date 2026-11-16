@@ -97,6 +97,8 @@ class EndEffectorPosition(BaseModel):
     ry: Optional[float] = Field(description="Absolute Yaw in degrees")
     rz: Optional[float] = Field(description="Absolute Roll in degrees")
     open: float = Field(description="0 for closed, 1 for open")
+    robot_id: Optional[int] = Field(default=None, description="The robot that answered.")
+    serial: Optional[str] = Field(default=None, description="Serial of that robot.")
 
 
 class MoveAbsoluteRequest(BaseModel):
@@ -438,6 +440,8 @@ class VoltageReadResponse(BaseModel):
         ...,
         description="A list of length 6, with the current voltage of each joint. If the robot is not connected, this will be None.",
     )
+    robot_id: Optional[int] = Field(default=None, description="The robot that answered.")
+    serial: Optional[str] = Field(default=None, description="Serial of that robot.")
 
 
 class TemperatureReadResponse(BaseModel):
@@ -449,6 +453,8 @@ class TemperatureReadResponse(BaseModel):
         ...,
         description=" A list of Temperature objects, one for each joint. If the robot is not connected, this will be None.",
     )
+    robot_id: Optional[int] = Field(default=None, description="The robot that answered.")
+    serial: Optional[str] = Field(default=None, description="Serial of that robot.")
 
 
 class TemperatureWriteRequest(BaseModel):
