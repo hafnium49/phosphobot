@@ -135,7 +135,7 @@ class LeaderFollowerThread(threading.Thread):
 
                 # Apply custom PID gains
                 for i in range(6):
-                    leader._set_pid_gains_motors(
+                    leader._try_set_pid_gains_motors(
                         servo_id=i + 1,
                         p_gain=p_gains[i],
                         i_gain=0,
@@ -150,54 +150,59 @@ class LeaderFollowerThread(threading.Thread):
             leader = pair.leader
             follower = pair.follower
 
-            leader.enable_torque()
-            if (
-                isinstance(leader, SO100Hardware)
-                and leader.name in self.original_pid_gains
-                and self.enable_gravity_compensation
-            ):
-                # Reset PID gains to original values
-                original_gains = self.original_pid_gains[leader.name]
-                for i in range(len(original_gains)):
-                    p_gain, _, d_gain = original_gains[i]
-                    leader._set_pid_gains_motors(
-                        servo_id=i + 1, p_gain=p_gain, i_gain=0, d_gain=d_gain
-                    )
-                    time.sleep(0.05)
+            try:
+                leader.enable_torque()
+                if self.enable_gravity_compensation:
+                    self._restore_pid_gains(leader)
+                self._restore_pid_gains(follower)
+            except Exception as e:
+                logger.warning(f"Error while resetting PID gains: {e}")
+            finally:
+                # Whatever happened to the gains, both robots are released
+                try:
+                    leader.disable_torque()
+                finally:
+                    follower.disable_torque()
 
-            if (
-                isinstance(follower, SO100Hardware)
-                and follower.name in self.original_pid_gains
-            ):
-                original_gains = self.original_pid_gains[follower.name]
-                for i in range(len(original_gains)):
-                    p_gain, _, d_gain = original_gains[i]
-                    follower._set_pid_gains_motors(
-                        servo_id=i + 1, p_gain=p_gain, i_gain=0, d_gain=d_gain
-                    )
-                    time.sleep(0.05)
-
-            leader.disable_torque()
-            follower.disable_torque()
+    def _restore_pid_gains(
+        self, robot: Union[BaseManipulator, RemotePhosphobot]
+    ) -> None:
+        """
+        Reset the PID gains of the robot to those stored at set-up, if any.
+        A servo that fails, or whose gains could not be read at set-up, is skipped.
+        """
+        if not isinstance(robot, SO100Hardware):
+            return
+        if robot.name not in self.original_pid_gains:
+            return
+        for i, original_gains in enumerate(self.original_pid_gains[robot.name]):
+            if original_gains is None:
+                continue
+            p_gain, _, d_gain = original_gains
+            robot._try_set_pid_gains_motors(
+                servo_id=i + 1, p_gain=p_gain, i_gain=0, d_gain=d_gain
+            )
+            time.sleep(0.05)
 
     def run(self) -> None:
         """The main control loop of the thread."""
-        self._setup_robots()
-        logger.info(
-            f"Starting leader-follower control with {len(self.robot_pairs)} pairs of robots:"
-            + ", ".join(
-                f"{pair.leader.name} -> {pair.follower.name}"
-                for pair in self.robot_pairs
-            )
-            + f"\ninvert_controls={self.invert_controls}\nenable_gravity_compensation={self.enable_gravity_compensation}"
-            + (
-                f"\ncompensation_values={self.compensation_values}"
-                if self.compensation_values
-                else ""
-            )
-        )
-
         try:
+            # Inside the try: a set-up that fails is cleaned up like a loop that fails
+            self._setup_robots()
+            logger.info(
+                f"Starting leader-follower control with {len(self.robot_pairs)} pairs of robots:"
+                + ", ".join(
+                    f"{pair.leader.name} -> {pair.follower.name}"
+                    for pair in self.robot_pairs
+                )
+                + f"\ninvert_controls={self.invert_controls}\nenable_gravity_compensation={self.enable_gravity_compensation}"
+                + (
+                    f"\ncompensation_values={self.compensation_values}"
+                    if self.compensation_values
+                    else ""
+                )
+            )
+
             while self.control_signal.is_in_loop():
                 start_time = time.perf_counter()
 
@@ -233,8 +238,12 @@ class LeaderFollowerThread(threading.Thread):
             logger.error(f"Error in leader-follower control loop: {e}")
             self.control_signal.stop()
         finally:
-            self._cleanup_robots()
-            logger.info("Leader-follower control stopped.")
+            try:
+                self._cleanup_robots()
+            finally:
+                # However the loop ended, it is not running anymore
+                self.control_signal.stop()
+                logger.info("Leader-follower control stopped.")
 
     def _simple_mirroring_step(
         self,

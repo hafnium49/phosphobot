@@ -314,6 +314,25 @@ class SO100Hardware(BaseManipulator):
                 "Motors torque is disabled. Motors must have torque enabled to change PID coefficients. Enable torque first."
             )
 
+    def _try_set_pid_gains_motors(
+        self, servo_id: int, p_gain: int = 32, i_gain: int = 0, d_gain: int = 32
+    ) -> bool:
+        """
+        _set_pid_gains_motors for the loops that set the gains of several servos
+        and must go on (gravity compensation, leader-follower): a servo whose gains
+        could not be set is logged and skipped.
+
+        Returns False for that servo.
+        """
+        try:
+            self._set_pid_gains_motors(
+                servo_id, p_gain=p_gain, i_gain=i_gain, d_gain=d_gain
+            )
+            return True
+        except Exception as e:
+            logger.warning(f"PID gains of servo {servo_id} were not set: {e}")
+            return False
+
     def _get_pid_gains_motor(self, servo_id: int) -> Optional[Tuple[int, int, int]]:
         """
         Get the PID gains for the Feetech servo.
@@ -724,6 +743,16 @@ class SO100Hardware(BaseManipulator):
         Background task that implements gravity compensation control:
         - Applies gravity compensation to the robot
         """
+        try:
+            await self._gravity_compensation_loop(control_signal)
+        finally:
+            # However the loop ended, it is not running anymore
+            control_signal.stop()
+
+    async def _gravity_compensation_loop(
+        self,
+        control_signal: ControlSignal,
+    ) -> None:
         # Set up PID gains for leader's gravity compensation
         current_voltage = self.current_voltage()
         if current_voltage is None:
@@ -752,7 +781,7 @@ class SO100Hardware(BaseManipulator):
 
         # Apply custom PID gains to leader for all six motors
         for i in range(6):
-            self._set_pid_gains_motors(
+            self._try_set_pid_gains_motors(
                 servo_id=i + 1,
                 p_gain=p_gains[i],
                 i_gain=0,
@@ -799,7 +828,7 @@ class SO100Hardware(BaseManipulator):
 
         # Cleanup: Reset leader's PID gains to default for all six motors
         for i in range(6):  # Changed from 4 to 6
-            self._set_pid_gains_motors(
+            self._try_set_pid_gains_motors(
                 servo_id=i + 1,
                 p_gain=default_p_gains[i],
                 i_gain=0,
