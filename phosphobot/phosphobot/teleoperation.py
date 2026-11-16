@@ -16,6 +16,7 @@ from phosphobot.hardware import BaseManipulator
 from phosphobot.hardware.base import BaseMobileRobot
 from phosphobot.models import (
     AppControlData,
+    BaseRobot,
     RobotStatus,
     TeleopSettings,
     UDPServerInformationResponse,
@@ -268,9 +269,16 @@ class TeleopManager:
             )
             return False
 
-    async def process_control_data(self, control_data: AppControlData) -> bool:
+    async def process_control_data(
+        self, control_data: AppControlData, robot: Optional[BaseRobot] = None
+    ) -> bool:
         """
         Process control data
+
+        Args:
+            robot: The robot to move, when the caller has named one (/move/teleop).
+                If None, the robot is self.robot_id in the list of robots, or else
+                the one that control_data.source selects.
         Returns:
             True if the command was processed successfully, False otherwise.
         """
@@ -296,13 +304,14 @@ class TeleopManager:
             state.last_timestamp = time.time()
 
         # If robot_id is set, get the specific robot and move it accordingly
-        if self.robot_id is not None:
+        if robot is None and self.robot_id is not None:
             # robot = await self.rcm.get_robot(self.robot_id)
             try:
                 robot = self._robots[self.robot_id]
             except IndexError:
                 logger.warning(f"Robot ID {self.robot_id} not found in the robot list")
                 return False
+        if robot is not None:
             if isinstance(robot, BaseManipulator):
                 await self._process_control_data_manipulator(control_data, robot)
                 return True
@@ -310,7 +319,7 @@ class TeleopManager:
                 await self._process_control_data_mobile_robot(control_data, robot)
                 return True
             else:
-                logger.error(f"Unknown robot type for robot_id {self.robot_id}")
+                logger.error(f"Unknown robot type for robot {robot.name}")
                 return False
 
         # Otherwise (ex: VR control), fetch the manipulators and mobile robots based on control_data.source

@@ -23,6 +23,7 @@ from supabase_auth.types import Session as SupabaseSession
 from phosphobot.ai_control import CustomAIControlSignal, setup_ai_control
 from phosphobot.camera import AllCameras, get_all_cameras
 from phosphobot.control_signal import ControlSignal
+from phosphobot.endpoints.arm_select import Arm, arm_or_first, arm_required
 from phosphobot.hardware.base import BaseManipulator
 from phosphobot.leader_follower import RobotPair, start_leader_follower_loop
 from phosphobot.models import (
@@ -90,13 +91,13 @@ signal_vr_control = ControlSignal()
     description="Initialize the robot to its initial position before starting the teleoperation.",
 )
 async def move_init(
-    robot_id: Optional[int] = None,
+    arm: Arm = Depends(arm_required),
     teleop_manager: TeleopManager = Depends(get_teleop_manager),
 ) -> StatusResponse:
     """
     Initialize the robot to its initial position before starting the teleoperation.
     """
-    await teleop_manager.move_init(robot_id=robot_id)
+    await teleop_manager.move_init(robot_id=arm.robot_id)
     return StatusResponse()
 
 
@@ -108,11 +109,10 @@ async def move_init(
 )
 async def move_teleop_post(
     control_data: AppControlData,
-    robot_id: Optional[int] = None,
+    arm: Arm = Depends(arm_required),
     teleop_manager: TeleopManager = Depends(get_teleop_manager),
 ) -> StatusResponse:
-    teleop_manager.robot_id = robot_id
-    await teleop_manager.process_control_data(control_data)
+    await teleop_manager.process_control_data(control_data, robot=arm.robot)
     return StatusResponse()
 
 
@@ -181,14 +181,13 @@ async def stop_teleop_udp(
 async def move_to_absolute_position(
     query: MoveAbsoluteRequest,
     background_tasks: BackgroundTasks,
-    robot_id: int = 0,
-    rcm: RobotConnectionManager = Depends(get_rcm),
+    arm: Arm = Depends(arm_required),
 ) -> StatusResponse:
     """
     Data: position
     Update the robot position based on the received data
     """
-    robot = await rcm.get_robot(robot_id)
+    robot = arm.robot
 
     # Divide by 100 to convert from cm to m
     query.x = query.x / 100 if query.x is not None else 0
@@ -304,8 +303,7 @@ async def move_to_absolute_position(
 async def move_relative(
     data: RelativeEndEffectorPosition,
     background_tasks: BackgroundTasks,
-    robot_id: int = 0,
-    rcm: RobotConnectionManager = Depends(get_rcm),
+    arm: Arm = Depends(arm_required),
 ) -> StatusResponse:
     """
     Data: The delta sent by OpenVLA for example
@@ -316,7 +314,7 @@ async def move_relative(
     data.y = data.y / 100 if data.y is not None else None
     data.z = data.z / 100 if data.z is not None else None
 
-    robot = await rcm.get_robot(robot_id)
+    robot = arm.robot
 
     if (
         data.x is None
@@ -410,8 +408,7 @@ async def move_relative(
             max_trials=1,
         ),
         background_tasks=background_tasks,
-        robot_id=robot_id,
-        rcm=rcm,
+        arm=arm,
     )
 
     return StatusResponse()
@@ -424,13 +421,12 @@ async def move_relative(
     description="Make the robot say hello by opening and closing its gripper. (Test endpoint)",
 )
 async def say_hello(
-    robot_id: int = 0,
-    rcm: RobotConnectionManager = Depends(get_rcm),
+    arm: Arm = Depends(arm_required),
 ) -> StatusResponse:
     """
     Make the robot say hello by opening and closing its gripper.
     """
-    robot = await rcm.get_robot(robot_id)
+    robot = arm.robot
 
     if not hasattr(robot, "control_gripper"):
         raise HTTPException(
@@ -457,13 +453,12 @@ async def say_hello(
     description="Put the robot to its sleep position by giving direct instructions to joints. This function disables the torque.",
 )
 async def move_sleep(
-    robot_id: int = 0,
-    rcm: RobotConnectionManager = Depends(get_rcm),
+    arm: Arm = Depends(arm_required),
 ) -> StatusResponse:
     """
     Put the robot to its sleep position.
     """
-    robot = await rcm.get_robot(robot_id)
+    robot = arm.robot
     await robot.move_to_sleep()
     return StatusResponse()
 
@@ -476,13 +471,12 @@ async def move_sleep(
 )
 async def end_effector_read(
     query: Optional[EndEffectorReadRequest] = None,
-    robot_id: int = 0,
-    rcm: RobotConnectionManager = Depends(get_rcm),
+    arm: Arm = Depends(arm_or_first),
 ) -> EndEffectorPosition:
     """
     Get the position, orientation, and open status of the end effector.
     """
-    robot = await rcm.get_robot(robot_id)
+    robot = arm.robot
     if query is None:
         query = EndEffectorReadRequest(only_gripper=False, sync=False)
 
@@ -513,7 +507,7 @@ async def end_effector_read(
     if initial_position is None or initial_orientation_rad is None:
         raise HTTPException(
             status_code=400,
-            detail=f"Before using /end-effector/read you need to call /move/init?robot_id={robot_id} to initialize the robot's position and orientation.",
+            detail=f"Before using /end-effector/read you need to call /move/init?robot_id={arm.robot_id} to initialize the robot's position and orientation.",
         )
 
     position, orientation, open_status = robot.get_end_effector_state(sync=query.sync)
@@ -542,13 +536,12 @@ async def end_effector_read(
     description="Read the current voltage of the robot's motors.",
 )
 async def read_voltage(
-    robot_id: int = 0,
-    rcm: RobotConnectionManager = Depends(get_rcm),
+    arm: Arm = Depends(arm_or_first),
 ) -> VoltageReadResponse:
     """
     Read voltage of the robot.
     """
-    robot = await rcm.get_robot(robot_id)
+    robot = arm.robot
     if not hasattr(robot, "current_voltage"):
         raise HTTPException(
             status_code=400,
@@ -568,13 +561,12 @@ async def read_voltage(
     description="Read the current Temperature and maximum Temperature of the robot's motors.",
 )
 async def read_temperature(
-    robot_id: int = 0,
-    rcm: RobotConnectionManager = Depends(get_rcm),
+    arm: Arm = Depends(arm_or_first),
 ) -> TemperatureReadResponse:
     """
     Read temperature of the robot.
     """
-    robot = await rcm.get_robot(robot_id)
+    robot = arm.robot
     if not hasattr(robot, "current_temperature"):
         raise HTTPException(
             status_code=400,
@@ -596,13 +588,12 @@ async def read_temperature(
 )
 async def write_temperature(
     request: TemperatureWriteRequest,
-    robot_id: int = 0,
-    rcm: RobotConnectionManager = Depends(get_rcm),
+    arm: Arm = Depends(arm_required),
 ) -> StatusResponse:
     """
     Set the robot's maximum temperature for motors.
     """
-    robot = await rcm.get_robot(robot_id)
+    robot = arm.robot
     if not hasattr(robot, "set_maximum_temperature"):
         raise HTTPException(
             status_code=400,
@@ -621,13 +612,12 @@ async def write_temperature(
     description="Read the current torque of the robot's joints.",
 )
 async def read_torque(
-    robot_id: int = 0,
-    rcm: RobotConnectionManager = Depends(get_rcm),
+    arm: Arm = Depends(arm_or_first),
 ) -> TorqueReadResponse:
     """
     Read torque of the robot.
     """
-    robot = await rcm.get_robot(robot_id)
+    robot = arm.robot
 
     if not hasattr(robot, "current_torque"):
         raise HTTPException(
@@ -653,41 +643,23 @@ async def read_torque(
 )
 async def toggle_torque(
     request: TorqueControlRequest,
-    robot_id: Optional[int] = None,
-    rcm: RobotConnectionManager = Depends(get_rcm),
+    arm: Arm = Depends(arm_required),
 ) -> StatusResponse:
     """
     Enable or disable the torque of the robot.
     """
+    robot = arm.robot
 
-    if robot_id is not None:
-        robot = await rcm.get_robot(robot_id)
+    if not hasattr(robot, "enable_torque") or not hasattr(robot, "disable_torque"):
+        raise HTTPException(
+            status_code=400,
+            detail="Robot does not support torque control",
+        )
 
-        if not hasattr(robot, "enable_torque") or not hasattr(robot, "disable_torque"):
-            raise HTTPException(
-                status_code=400,
-                detail="Robot does not support torque control",
-            )
-
-        if request.torque_status:
-            robot.enable_torque()
-        else:
-            robot.disable_torque()
-        return StatusResponse()
-
-    # If no robot_id is provided, toggle torque for all robots
-    for robot in await rcm.robots:
-        if not hasattr(robot, "enable_torque") or not hasattr(robot, "disable_torque"):
-            logger.warning(
-                f"Robot {robot.name} does not support torque control. Skipping."
-            )
-            continue
-        else:
-            if request.torque_status:
-                robot.enable_torque()
-            else:
-                robot.disable_torque()
-
+    if request.torque_status:
+        robot.enable_torque()
+    else:
+        robot.disable_torque()
     return StatusResponse()
 
 
@@ -699,8 +671,7 @@ async def toggle_torque(
 )
 async def read_joints(
     request: Optional[JointsReadRequest] = None,
-    robot_id: int = 0,
-    rcm: RobotConnectionManager = Depends(get_rcm),
+    arm: Arm = Depends(arm_or_first),
 ) -> JointsReadResponse:
     """
     Read joint position.
@@ -708,7 +679,7 @@ async def read_joints(
     if request is None:
         request = JointsReadRequest(unit="rad", joints_ids=None, source="robot")
 
-    robot = await rcm.get_robot(robot_id)
+    robot = arm.robot
 
     if not hasattr(robot, "read_joints_position"):
         raise HTTPException(
@@ -739,13 +710,12 @@ async def read_joints(
 )
 async def write_joints(
     request: JointsWriteRequest,
-    robot_id: int = 0,
-    rcm: RobotConnectionManager = Depends(get_rcm),
+    arm: Arm = Depends(arm_required),
 ) -> StatusResponse:
     """
     Move the robot's joints to the specified angles.
     """
-    robot = await rcm.get_robot(robot_id)
+    robot = arm.robot
     if not hasattr(robot, "write_joint_positions"):
         raise HTTPException(
             status_code=400,
@@ -767,15 +737,14 @@ async def write_joints(
     description="Start the calibration sequence for the robot.",
 )
 async def calibrate(
-    robot_id: int = 0,
-    rcm: RobotConnectionManager = Depends(get_rcm),
+    arm: Arm = Depends(arm_required),
 ) -> CalibrateResponse:
     """
     Starts the calibration sequence of the robot.
 
     This endpoints disable torque. Move the robot to the positions you see in the simulator and call this endpoint again, until the calibration is complete.
     """
-    robot = await rcm.get_robot(robot_id)
+    robot = arm.robot
 
     if (
         not hasattr(robot, "calibrate")
@@ -916,7 +885,7 @@ async def stop_leader_follower(
 @router.post("/gravity/start", response_model=StatusResponse)
 async def start_gravity(
     background_tasks: BackgroundTasks,
-    robot_id: int = 0,
+    arm: Arm = Depends(arm_required),
     rcm: RobotConnectionManager = Depends(get_rcm),
 ) -> StatusResponse:
     """
@@ -930,7 +899,7 @@ async def start_gravity(
     if len(await rcm.robots) == 0:
         raise HTTPException(status_code=400, detail="No robot connected")
 
-    robot = await rcm.get_robot(robot_id)
+    robot = arm.robot
     if not isinstance(robot, SO100Hardware):
         raise HTTPException(
             status_code=400, detail="Gravity compensation is only for SO-100 robot"
@@ -1307,13 +1276,14 @@ async def add_robot_connection(
 
 @router.post("/robot/disconnect", response_model=StatusResponse)
 async def disconnect_robot(
-    robot_id: int = 0,
+    arm: Arm = Depends(arm_required),
     rcm: RobotConnectionManager = Depends(get_rcm),
 ) -> StatusResponse:
     """
     Manually add a robot connection to the robot manager.
     Useful for adding robot that are accessible only via WiFi, for example.
     """
+    robot_id = arm.robot_id
     try:
         await rcm.remove_connection(robot_id=robot_id)
         return StatusResponse(
@@ -1333,18 +1303,17 @@ async def disconnect_robot(
 
 @router.post("/robot/config", response_model=RobotConfigResponse)
 async def get_robot_config(
-    robot_id: int = 0,
-    rcm: RobotConnectionManager = Depends(get_rcm),
+    arm: Arm = Depends(arm_or_first),
 ) -> RobotConfigResponse:
     """
     Get the configuration of the robot.
     """
-    robot = await rcm.get_robot(robot_id)
+    robot = arm.robot
 
     if isinstance(robot, BaseManipulator) or isinstance(robot, RemotePhosphobot):
         config = robot.config
         return RobotConfigResponse(
-            robot_id=robot_id,
+            robot_id=arm.robot_id,
             name=robot.name,
             config=config,
             gripper_joint_index=robot.GRIPPER_JOINT_INDEX,
