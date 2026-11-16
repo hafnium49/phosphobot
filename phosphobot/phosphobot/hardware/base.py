@@ -713,9 +713,12 @@ class BaseManipulator(BaseRobot):
                 for i, servo_id in enumerate(joints_ids):
                     joint_position = self.read_motor_position(servo_id)
                     if joint_position is not None:
-                        current_position[i] = joint_position
+                        # A bus read of one motor is an array of one value
+                        current_position[i] = float(np.asarray(joint_position).flat[0])
                     else:
-                        logger.warning("None value for joint ", servo_id)
+                        # NaN, as a failed read of all the motors: never a silent 0
+                        logger.warning(f"None value for joint {servo_id}")
+                        current_position[i] = np.nan
             source_unit = "motor_units"
             output_position = current_position
         else:

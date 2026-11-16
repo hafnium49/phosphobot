@@ -193,3 +193,22 @@ def test_only_simulation_torque_read_still_answers(client, arms, only_simulation
     r = client.post("/torque/read", params=R1)
     assert r.status_code == 200 and r.json()["source"] == "simulation"
     assert len(r.json()["current_torque"]) == 6
+
+
+def test_read_of_single_joints_fails_loudly_too(client, arms):
+    body = {"unit": "motor_units", "joints_ids": [1, 2]}
+    arms[1].motors_bus.regs["Present_Position"] = [100, 200, 300, 400, 500, 600]
+    r = client.post("/joints/read", params=R1, json=body)
+    assert r.status_code == 200 and r.json()["angles"] == [100, 200]
+    assert r.json()["source"] == "hardware"
+    arms[1].motors_bus.fail = {"read:Present_Position"}
+    assert client.post("/joints/read", params=R1, json=body).status_code == 502
+
+
+def test_failed_read_of_one_servo_is_nan_not_zero(arms):
+    import numpy as np
+
+    arm = arms[1]
+    arm.read_motor_position = lambda servo_id, **kwargs: None if servo_id == 2 else 7
+    positions = arm.read_joints_position(unit="motor_units", joints_ids=[1, 2, 3])
+    assert positions[0] == 7 and np.isnan(positions[1]) and positions[2] == 7
