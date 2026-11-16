@@ -168,7 +168,14 @@ class TeleopManager:
         We then move the robot to that position and orientation.
         """
         if robot.initial_position is None or robot.initial_orientation_rad is None:
-            await self.move_init()
+            # Initialise this robot and no other
+            robots = await self.rcm.robots
+            if robot not in robots:
+                logger.warning(
+                    f"Robot {robot.name} is not in the list of robots anymore; not initialising, skipping this command"
+                )
+                return False
+            await self.move_init(robot_id=robots.index(robot))
         (
             target_pos,
             target_orient_deg,
@@ -317,8 +324,9 @@ class TeleopManager:
                 return False
         if robot is not None:
             if isinstance(robot, BaseManipulator):
-                await self._process_control_data_manipulator(control_data, robot)
-                return True
+                return await self._process_control_data_manipulator(
+                    control_data, robot
+                )
             elif isinstance(robot, BaseMobileRobot):
                 await self._process_control_data_mobile_robot(control_data, robot)
                 return True

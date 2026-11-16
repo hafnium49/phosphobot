@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from phosphobot.configs import Configuration, config
 from phosphobot.endpoints.control import select_ai_robots
 from phosphobot.endpoints.recording import select_playback_robots
+from phosphobot.models import AppControlData
 from phosphobot.teleoperation import TeleopManager
 
 from .conftest import FakeRCM
@@ -93,3 +94,32 @@ def test_playback_refuses_before_loading_an_episode(client):
         json={"episode_path": "/nonexistent", "robot_serials": ["5A68009540"]},
     )
     assert r.status_code == 400 and "does not exist" in r.json()["detail"]
+
+
+TELEOP = {"x": 0, "y": 0, "z": 0, "rx": 0, "ry": 0, "rz": 0, "open": 1}
+
+
+def test_teleop_initialises_only_the_named_arm(client, arms):
+    assert all(a.initial_position is None for a in arms)
+    r = client.post("/move/teleop", params={"robot_id": 1}, json=TELEOP)
+    assert r.status_code == 200
+    assert arms[0].motors_bus.calls == [] and arms[0].initial_position is None
+    assert arms[1].initial_position is not None
+    assert ("write", "Goal_Position") in arms[1].motors_bus.calls
+
+
+@pytest.mark.asyncio
+async def test_teleop_that_resolves_no_arm_initialises_nothing(arms):
+    tm = TeleopManager(rcm=FakeRCM(arms))
+    # No robot named, and no serial configured for the controller
+    assert await tm.process_control_data(AppControlData(**TELEOP)) is False
+    assert all(a.motors_bus.calls == [] and a.initial_position is None for a in arms)
+
+
+@pytest.mark.asyncio
+async def test_teleop_does_not_initialise_an_arm_that_left_the_list(arms):
+    # The manager is handed an arm that the connection manager no longer lists
+    tm = TeleopManager(rcm=FakeRCM([arms[0]]))
+    done = await tm.process_control_data(AppControlData(**TELEOP), robot=arms[1])
+    assert done is False
+    assert all(a.motors_bus.calls == [] and a.initial_position is None for a in arms)
