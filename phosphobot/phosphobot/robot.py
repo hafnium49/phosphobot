@@ -351,8 +351,15 @@ class RobotConnectionManager:
         """
         Return the status of all robots. Used at server startup
         """
-        robots_status = [robot.status() for robot in await self.robots]
-        return [status for status in robots_status if status is not None]
+        robots_status = []
+        for robot_id, robot in enumerate(await self.robots):
+            status = robot.status()
+            if status is None:
+                continue
+            # Rows without a status are dropped: a row's position is not its id
+            status.robot_id = robot_id
+            robots_status.append(status)
+        return robots_status
 
     async def add_connection(
         self, robot_name: str, connection_details: dict[str, Any]

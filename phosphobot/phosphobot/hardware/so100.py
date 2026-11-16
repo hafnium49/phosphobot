@@ -67,6 +67,12 @@ class SO100Hardware(BaseManipulator):
 
     _gravity_task: Optional[asyncio.Task] = None
 
+    # Last Torque_Enable read from the bus: (values, time.monotonic() of the read).
+    # Dropped by every torque write and by disconnect.
+    _torque_enabled_cache: Optional[Tuple[List[bool], float]] = None
+    # time.monotonic() of the last successful bus read of all positions
+    last_position_read_monotonic: Optional[float] = None
+
     @property
     def servo_id_to_motor_name(self) -> Dict[int, str]:
         output: Dict[int, str] = {cast(int, v[0]): k for k, v in self.motors.items()}
@@ -131,6 +137,75 @@ class SO100Hardware(BaseManipulator):
         except Exception as e:
             logger.warning(f"Error disconnecting motors: {e}")
         self.is_connected = False
+        self._torque_enabled_cache = None
+
+    def read_torque_enabled(
+        self, max_age_s: float = 0.25
+    ) -> Tuple[Optional[List[bool]], Optional[float]]:
+        """
+        Read Torque_Enable of the six servos, in servo order.
+
+        One bus read serves every caller for max_age_s seconds.
+
+        Returns the values and their age in seconds, or (None, None) when the arm
+        is off the bus or the read failed.
+        """
+        if not self.is_connected:
+            return None, None
+
+        cache = self._torque_enabled_cache
+        if cache is not None:
+            age_s = time.monotonic() - cache[1]
+            if age_s <= max_age_s:
+                return cache[0], age_s
+
+        try:
+            torque_status = self.motors_bus.read(
+                "Torque_Enable", motor_names=list(self.motors.keys())
+            )
+            self.motor_communication_errors = 0
+        except Exception as e:
+            logger.warning(f"Error reading torque status: {e}")
+            self.update_motor_errors()
+            return None, None
+
+        torque_enabled = [bool(value) for value in torque_status]
+        self._torque_enabled_cache = (torque_enabled, time.monotonic())
+        return torque_enabled, 0.0
+
+    def read_raw(self) -> dict:
+        """
+        Read present position, goal position and torque enable straight from the
+        servos, addressed by servo id.
+
+        The positions are the 16-bit words as read (bit 15 is the sign, not
+        decoded): this path applies neither the rotation unwrapping of
+        FeetechMotorsBus.read nor the calibration.
+
+        Raises ConnectionError when the arm is off the bus or any read failed.
+        """
+        if not self.is_connected:
+            raise ConnectionError(
+                f"arm {getattr(self, 'SERIAL_ID', None)} is not on the bus"
+            )
+
+        words = {}
+        try:
+            for data_name in ("Present_Position", "Goal_Position", "Torque_Enable"):
+                words[data_name] = self.motors_bus.read_with_motor_ids(
+                    self.motors_bus.motor_models, list(self.SERVO_IDS), data_name
+                )
+            self.motor_communication_errors = 0
+        except Exception as e:
+            logger.warning(f"Error reading raw registers: {e}")
+            self.update_motor_errors()
+            raise ConnectionError(f"raw read failed: {e}") from e
+
+        return {
+            "present_position": [int(word) for word in words["Present_Position"]],
+            "goal_position": [int(word) for word in words["Goal_Position"]],
+            "torque_enabled": [bool(word) for word in words["Torque_Enable"]],
+        }
 
     def enable_torque(self) -> None:
         if not self.is_connected:
@@ -139,6 +214,7 @@ class SO100Hardware(BaseManipulator):
             logger.warning("Robot config is not initialized. Cannot enable torque.")
             return None
 
+        self._torque_enabled_cache = None
         try:
             self.motors_bus.write("Torque_Enable", 1)
             for servo_id, c in enumerate(self.config.pid_gains):
@@ -158,6 +234,7 @@ class SO100Hardware(BaseManipulator):
         # Disable torque
         if not self.is_connected:
             return None
+        self._torque_enabled_cache = None
         try:
             self.motors_bus.write("Torque_Enable", 0)
             self.motor_communication_errors = 0
@@ -318,6 +395,7 @@ class SO100Hardware(BaseManipulator):
                 "Present_Position", motor_names=motor_names
             )
             self.motor_communication_errors = 0
+            self.last_position_read_monotonic = time.monotonic()
         except Exception as e:
             logger.warning(f"Error reading motor position: {e}")
             self.update_motor_errors()
@@ -365,10 +443,20 @@ class SO100Hardware(BaseManipulator):
 
     def status(self) -> RobotConfigStatus:
         temperature = self.current_temperature()
+        torque_enabled, torque_age_s = self.read_torque_enabled()
         return RobotConfigStatus(
             name=self.name,
             device_name=getattr(self, "SERIAL_ID", None),
             temperature=temperature,
+            serial=getattr(self, "SERIAL_ID", None),
+            bus_connected=bool(self.is_connected),
+            # Where /joints/read would take the positions from right now
+            readback_source=(
+                "hardware" if self.is_connected and not self.is_moving else "simulation"
+            ),
+            torque_enabled=torque_enabled,
+            torque_age_ms=None if torque_age_s is None else torque_age_s * 1000,
+            status_unix_s=time.time(),
         )
 
     def read_motor_temperature(
@@ -584,6 +672,7 @@ class SO100Hardware(BaseManipulator):
             logger.warning("Robot is not connected.")
             return None
 
+        self._torque_enabled_cache = None
         self.motors_bus.write("Torque_Enable", 128)
         time.sleep(1)
 

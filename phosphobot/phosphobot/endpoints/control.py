@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 import traceback
 from copy import copy
 from typing import Optional, cast
@@ -22,6 +23,7 @@ from supabase_auth.types import Session as SupabaseSession
 
 from phosphobot.ai_control import CustomAIControlSignal, setup_ai_control
 from phosphobot.camera import AllCameras, get_all_cameras
+from phosphobot.configs import config
 from phosphobot.control_signal import ControlSignal
 from phosphobot.endpoints.arm_select import Arm, arm_or_first, arm_required
 from phosphobot.hardware.base import BaseManipulator
@@ -34,6 +36,7 @@ from phosphobot.models import (
     EndEffectorPosition,
     EndEffectorReadRequest,
     FeedbackRequest,
+    JointsReadRawResponse,
     JointsReadRequest,
     JointsReadResponse,
     JointsWriteRequest,
@@ -687,9 +690,39 @@ async def read_joints(
             detail="Robot does not support reading joint positions",
         )
 
+    bus_connected = bool(robot.is_connected)
+    if request.source == "robot" and not bus_connected and not config.ONLY_SIMULATION:
+        # Do not answer a hardware read from the simulation
+        raise HTTPException(
+            status_code=503, detail=f"arm {arm.serial} is not on the bus"
+        )
+    # The condition under which read_joints_position reads the bus
+    from_bus = request.source == "robot" and bus_connected and not robot.is_moving
+
+    read_started = time.monotonic()
     current_units_position = robot.read_joints_position(
         unit=request.unit, joints_ids=request.joints_ids, source=request.source
     )
+
+    read_unix_s: Optional[float] = None
+    read_age_ms: Optional[float] = None
+    if from_bus:
+        if np.isnan(current_units_position).any():
+            raise HTTPException(
+                status_code=502, detail=f"bus read failed for arm {arm.serial}"
+            )
+        # A read of single joints does not stamp itself: it is no older than this
+        read_monotonic = getattr(robot, "last_position_read_monotonic", None)
+        if read_monotonic is None or read_monotonic < read_started:
+            read_monotonic = read_started
+        read_age_s = time.monotonic() - read_monotonic
+        read_unix_s = time.time() - read_age_s
+        read_age_ms = read_age_s * 1000
+
+    torque_enabled, torque_age_s = None, None
+    if hasattr(robot, "read_torque_enabled"):
+        torque_enabled, torque_age_s = robot.read_torque_enabled()
+
     # Replace NaN values with None and convert to list
     current_units_position = [
         float(angle) if not np.isnan(angle) else None
@@ -699,6 +732,57 @@ async def read_joints(
     return JointsReadResponse(
         angles=current_units_position,
         unit=request.unit,
+        robot_id=arm.robot_id,
+        serial=arm.serial,
+        source="hardware" if from_bus else "simulation",
+        bus_connected=bus_connected,
+        read_unix_s=read_unix_s,
+        read_age_ms=read_age_ms,
+        torque_enabled=torque_enabled,
+        torque_age_ms=None if torque_age_s is None else torque_age_s * 1000,
+    )
+
+
+@router.post(
+    "/joints/read/raw",
+    response_model=JointsReadRawResponse,
+    summary="Read Raw Servo Registers",
+    description="Read present position, goal position and torque enable straight from the servos, in servo ticks: no unwrapping, no calibration, never from simulation.",
+)
+async def read_joints_raw(
+    arm: Arm = Depends(arm_required),
+) -> JointsReadRawResponse:
+    """
+    Read the servos' own position words and torque state.
+    """
+    robot = arm.robot
+
+    if not hasattr(robot, "read_raw"):
+        raise HTTPException(
+            status_code=400,
+            detail="Robot does not support reading raw servo registers",
+        )
+    if not robot.is_connected:
+        raise HTTPException(
+            status_code=503, detail=f"arm {arm.serial} is not on the bus"
+        )
+
+    read_started = time.monotonic()
+    read_unix_s = time.time()
+    try:
+        raw = robot.read_raw()
+    except Exception as e:
+        raise HTTPException(
+            status_code=502, detail=f"bus read failed for arm {arm.serial}: {e}"
+        )
+
+    return JointsReadRawResponse(
+        robot_id=arm.robot_id,
+        serial=arm.serial,
+        servo_ids=list(robot.SERVO_IDS),
+        read_unix_s=read_unix_s,
+        read_age_ms=(time.monotonic() - read_started) * 1000,
+        **raw,
     )
 
 
