@@ -938,23 +938,22 @@ class BaseManipulator(BaseRobot):
                 q_target_rad=np_angles_rad, enable_gripper=True
             )
 
+        # More angles than motors: refused before any motor is written
+        if len(np_angles_rad) > len(self.SERVO_IDS):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Joint ID {len(self.SERVO_IDS)} is out of range for the robot.",
+            )
+
         # Iterate over the angles and set the corresponding joint positions
         writes: List[Optional[bool]] = []
         for i, angle in enumerate(np_angles_rad):
-            if i < len(self.SERVO_IDS):
-                motor_units = self._radians_to_motor_units(
-                    angle, servo_id=self.SERVO_IDS[i]
-                )
-                writes.append(
-                    self.write_motor_position(
-                        servo_id=self.SERVO_IDS[i], units=motor_units
-                    )
-                )
-            else:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Joint ID {i} is out of range for the robot.",
-                )
+            motor_units = self._radians_to_motor_units(
+                angle, servo_id=self.SERVO_IDS[i]
+            )
+            writes.append(
+                self.write_motor_position(servo_id=self.SERVO_IDS[i], units=motor_units)
+            )
         return self._summarize_writes(writes)
 
     def write_gripper_command(self, command: float) -> None:

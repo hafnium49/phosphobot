@@ -49,13 +49,30 @@ def test_degrees_are_degrees(client, arms):
     assert arms[1].motors_bus.regs["Goal_Position"] == list(want)
 
 
-def test_short_write_reports_each_servo_write(client, arms):
-    short = {"angles": [0.1, 0.1], "unit": "rad"}
-    r = client.post("/joints/write", params=R1, json=short)
-    assert r.status_code == 200 and r.json()["bus_write"] is True
-    assert arms[1].motors_bus.calls.count(("write", "Goal_Position")) == 2
-    arms[1].motors_bus.fail = {"write:Goal_Position"}
-    assert client.post("/joints/write", params=R1, json=short).status_code == 502
+@pytest.mark.parametrize("count", [0, 2, 5, 7])
+def test_write_of_the_wrong_number_of_angles_writes_nothing(client, arms, count):
+    r = client.post(
+        "/joints/write", params=R1, json={"angles": [0.1] * count, "unit": "rad"}
+    )
+    assert r.status_code == 400 and "6" in r.json()["detail"]
+    assert arms[1].motors_bus.calls == []
+
+
+def test_short_write_by_method_reports_each_servo_write(arms):
+    # Not reachable over HTTP any more; the control loops may still write a prefix
+    arm = arms[1]
+    assert arm.write_joint_positions([0.1, 0.1], unit="rad") is True
+    assert arm.motors_bus.calls.count(("write", "Goal_Position")) == 2
+    arm.motors_bus.fail = {"write:Goal_Position"}
+    assert arm.write_joint_positions([0.1, 0.1], unit="rad") is False
+
+
+def test_too_many_angles_by_method_writes_nothing(arms):
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as e:
+        arms[1].write_joint_positions([0.1] * 7, unit="rad")
+    assert e.value.status_code == 400 and arms[1].motors_bus.calls == []
 
 
 def test_write_methods_say_whether_the_bus_write_was_issued(arms):
@@ -122,7 +139,6 @@ def test_only_simulation_write_is_still_200(client, arms, only_simulation):
     assert r.status_code == 200 and r.json()["bus_write"] is False
 
 
-def test_write_of_no_angles_does_not_claim_a_bus_write(client, arms):
-    r = client.post("/joints/write", params=R1, json={"angles": [], "unit": "rad"})
-    assert r.status_code == 200 and r.json()["bus_write"] is None
+def test_no_writes_is_not_a_bus_write(arms):
+    assert arms[1].write_joint_positions([], unit="rad") is None
     assert arms[1].motors_bus.calls == []

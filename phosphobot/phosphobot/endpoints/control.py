@@ -902,6 +902,13 @@ async def write_joints(
         )
 
     robot = cast(BaseManipulator, robot)
+    # Refused before any servo is written. (joints_ids is refused by the robot.)
+    nb_joints = len(getattr(robot, "SERVO_IDS", request.angles))
+    if request.joints_ids is None and len(request.angles) != nb_joints:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Got {len(request.angles)} angles for the {nb_joints} joints of the robot. Send the angles of all joints.",
+        )
     done = robot.write_joint_positions(
         angles=request.angles, unit=request.unit, joints_ids=request.joints_ids
     )
