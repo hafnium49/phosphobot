@@ -5,7 +5,7 @@ from copy import copy
 from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
-from typing import Dict, Literal, Optional, Tuple, cast
+from typing import Any, Dict, List, Literal, Optional, Tuple, cast
 
 import numpy as np
 from fastapi import WebSocket
@@ -149,6 +149,7 @@ class TeleopManager:
         try:
             # The list is read once: every step below acts on these robots
             robots = list(await self.rcm.robots)
+            targets: List[Any]
             if robot is not None:
                 if robot not in robots:
                     logger.warning(
