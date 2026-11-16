@@ -1134,10 +1134,20 @@ class RobotPairRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     leader_id: Optional[int] = Field(
-        ..., description="Serial number of the leader robot"
+        default=None,
+        description="robot_id of the leader robot. One of leader_id and leader_serial is required.",
     )
     follower_id: Optional[int] = Field(
-        ..., description="Serial number of the follower robot"
+        default=None,
+        description="robot_id of the follower robot. One of follower_id and follower_serial is required.",
+    )
+    leader_serial: Optional[str] = Field(
+        default=None,
+        description="Serial of the leader robot. If leader_id is also given, both must name the same robot.",
+    )
+    follower_serial: Optional[str] = Field(
+        default=None,
+        description="Serial of the follower robot. If follower_id is also given, both must name the same robot.",
     )
 
 

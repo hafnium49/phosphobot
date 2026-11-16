@@ -968,18 +968,29 @@ async def start_leader_follower(
     # Parse the robot IDs from the request
     robot_pairs: list[RobotPair] = []
     for i, robot_pair in enumerate(request.robot_pairs):
-        if robot_pair.follower_id is None:
+        if robot_pair.follower_id is None and robot_pair.follower_serial is None:
             raise HTTPException(
                 status_code=400,
                 detail=f"Follower ID is required for robot pair {i}.",
             )
-        if robot_pair.leader_id is None:
+        if robot_pair.leader_id is None and robot_pair.leader_serial is None:
             raise HTTPException(
                 status_code=400,
                 detail=f"Leader ID is required for robot pair {i}.",
             )
-        leader = await rcm.get_robot(robot_pair.leader_id)
-        follower = await rcm.get_robot(robot_pair.follower_id)
+        # As every endpoint that moves an arm: a negative or unknown id is refused,
+        # and an id and a serial given together must name the same robot
+        try:
+            _, leader = await rcm.resolve(
+                robot_pair.leader_id, robot_pair.leader_serial, required=True
+            )
+            _, follower = await rcm.resolve(
+                robot_pair.follower_id, robot_pair.follower_serial, required=True
+            )
+        except HTTPException as e:
+            raise HTTPException(
+                status_code=e.status_code, detail=f"Robot pair {i}: {e.detail}"
+            )
 
         if request.enable_gravity_compensation:
             # Only local SO100

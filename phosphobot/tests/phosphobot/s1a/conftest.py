@@ -123,6 +123,8 @@ def make_arm(serial: str, connected: bool = True) -> SO100Hardware:
     # only_simulation: default calibration, and no move registered at exit
     arm = SO100Hardware(only_simulation=True, serial_id=serial)
     arm.motors_bus = FakeBus()  # type: ignore
+    # A real arm has the path of its port here. This one cannot be opened
+    arm.device_name = f"/dev/fake-{serial}"
     arm.is_connected = connected
     arm._max_temperature_cache = {}
     return arm
