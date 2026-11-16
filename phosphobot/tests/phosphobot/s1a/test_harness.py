@@ -6,10 +6,17 @@ These pin what R6 (existing callers keep working) must keep.
 import pytest
 import serial.tools.list_ports
 
+from phosphobot.models import BaseRobotConfig
+
 
 def test_no_test_can_scan_ports():
     with pytest.raises(AssertionError):
         serial.tools.list_ports.comports()
+
+
+def test_no_test_can_write_a_calibration_file(arms):
+    with pytest.raises(AssertionError):
+        BaseRobotConfig.save_local(arms[0].config, serial_id="5A68011258")
 
 
 def test_legacy_read_shape(client):

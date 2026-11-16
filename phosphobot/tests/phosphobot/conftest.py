@@ -3,7 +3,8 @@ Guard for every test under tests/phosphobot: no test can scan or open a real por
 
 The rig PC runs these tests next to a live phosphobot. RobotConnectionManager.robots
 scans the serial ports and connects to whatever it finds, and AllCameras opens the
-video devices, so each way out to hardware raises here instead.
+video devices, so each way out to hardware raises here instead. So does saving a
+calibration: ~/phosphobot/calibration holds the rig's own files, keyed by serial.
 """
 
 from typing import Any
@@ -14,6 +15,7 @@ import serial.tools.list_ports
 
 from phosphobot.camera import AllCameras
 from phosphobot.hardware.motors.feetech import FeetechMotorsBus
+from phosphobot.models import BaseRobotConfig
 
 
 def _refuse(what: str) -> Any:
@@ -32,3 +34,6 @@ def no_real_ports(monkeypatch: pytest.MonkeyPatch) -> None:
     # Every other bus (Dynamixel, the Feetech SDK's own port handler) opens its port here
     monkeypatch.setattr(serial.Serial, "open", _refuse("serial.Serial.open"))
     monkeypatch.setattr(AllCameras, "__init__", _refuse("AllCameras()"))
+    monkeypatch.setattr(
+        BaseRobotConfig, "save_local", _refuse("write of a calibration file")
+    )
