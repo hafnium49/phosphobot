@@ -12,6 +12,7 @@ from fastapi import WebSocket
 from loguru import logger
 from pydantic import ValidationError
 
+from phosphobot.configs import config
 from phosphobot.hardware import BaseManipulator
 from phosphobot.hardware.base import BaseMobileRobot
 from phosphobot.models import (
@@ -82,29 +83,32 @@ class TeleopManager:
     async def get_manipulator_robot(self, source: str) -> Optional[BaseManipulator]:
         """
         Get the manipulator robot based on source
-        - "right" returns the first manipulator robot
-        - "left" returns the second manipulator robot
+        - "right" returns the manipulator whose serial is config.TELEOP_RIGHT_SERIAL
+        - "left" returns the manipulator whose serial is config.TELEOP_LEFT_SERIAL
 
-        This is a convention because 90% of people are right-handed.
+        Returns None when that serial is not set or does not name exactly one
+        manipulator: a position in the list of robots never selects an arm.
         """
-        right_robot = None
-        left_robot = None
-
-        for robot in self._robots:
-            if isinstance(robot, BaseManipulator):
-                if right_robot is None:
-                    right_robot = robot
-                elif left_robot is None:
-                    left_robot = robot
-                    break
-
         if source == "right":
-            return right_robot
+            serial = config.TELEOP_RIGHT_SERIAL
         elif source == "left":
-            return left_robot
+            serial = config.TELEOP_LEFT_SERIAL
         else:
             logger.error(f"Unknown source '{source}' for manipulator robot")
             return None
+
+        if serial is None or serial == "no_serial":
+            return None
+
+        matches = [
+            robot
+            for robot in self._robots
+            if isinstance(robot, BaseManipulator)
+            and getattr(robot, "SERIAL_ID", None) == serial
+        ]
+        if len(matches) != 1:
+            return None
+        return matches[0]
 
     async def get_mobile_robot(self, source: str) -> Optional[BaseMobileRobot]:
         """

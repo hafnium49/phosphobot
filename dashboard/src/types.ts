@@ -8,6 +8,12 @@ export type RobotConfigStatus = {
   device_name?: string;
   robot_type: "manipulator" | "mobile" | "other";
   temperature?: Temperature[];
+  // The id that addresses this robot now. Older servers do not send it:
+  // the position of the row is then the id.
+  robot_id?: number | null;
+  serial?: string | null;
+  bus_connected?: boolean | null;
+  torque_enabled?: boolean[] | null;
 };
 export type SingleCameraStatus = {
   camera_id: number;

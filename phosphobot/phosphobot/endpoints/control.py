@@ -2,7 +2,6 @@ import asyncio
 import json
 import time
 import traceback
-from copy import copy
 from typing import Optional, cast
 
 import httpx
@@ -25,7 +24,12 @@ from phosphobot.ai_control import CustomAIControlSignal, setup_ai_control
 from phosphobot.camera import AllCameras, get_all_cameras
 from phosphobot.configs import config
 from phosphobot.control_signal import ControlSignal
-from phosphobot.endpoints.arm_select import Arm, arm_or_first, arm_required
+from phosphobot.endpoints.arm_select import (
+    Arm,
+    arm_or_first,
+    arm_required,
+    robot_by_serial,
+)
 from phosphobot.hardware.base import BaseManipulator
 from phosphobot.leader_follower import RobotPair, start_leader_follower_loop
 from phosphobot.models import (
@@ -1094,6 +1098,43 @@ async def fetch_auto_control_status() -> AIStatusResponse:
     return AIStatusResponse(id=signal_ai_control.id, status=signal_ai_control.status)
 
 
+def select_ai_robots(
+    robots: list,
+    robot_serials: Optional[list[str]],
+    robot_serials_to_ignore: Optional[list[str]],
+) -> list[BaseManipulator]:
+    """
+    The manipulators an AI control request names by serial, without those to
+    ignore. A request that names none is refused: AI control never falls back to
+    every robot.
+    """
+    if not robot_serials:
+        raise HTTPException(status_code=422, detail="robot_serials is required")
+
+    selected: list[BaseManipulator] = []
+    for robot_serial in robot_serials:
+        robot = robot_by_serial(robots, robot_serial)
+        if not isinstance(robot, BaseManipulator):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Robot {robot.name} ({robot_serial}) is not a manipulator and is not supported for AI control.",
+            )
+        if (
+            robot_serials_to_ignore is not None
+            and robot_serial in robot_serials_to_ignore
+        ):
+            continue
+        if robot not in selected:
+            selected.append(robot)
+
+    if not selected:
+        raise HTTPException(
+            status_code=422,
+            detail="robot_serials names no robot that is not in robot_serials_to_ignore",
+        )
+    return selected
+
+
 @router.post(
     "/ai-control/spawn",
     response_model=SpawnStatusResponse,
@@ -1110,26 +1151,12 @@ async def spawn_inference_server(
     Start an inference server and return the server info.
     """
 
+    robots_to_control = select_ai_robots(
+        await rcm.robots, query.robot_serials, query.robot_serials_to_ignore
+    )
+
     supabase_client = await get_client()
     await supabase_client.auth.get_user()
-
-    robots_to_control = copy(await rcm.robots)
-    for robot in await rcm.robots:
-        if (
-            hasattr(robot, "SERIAL_ID")
-            and query.robot_serials_to_ignore is not None
-            and robot.SERIAL_ID in query.robot_serials_to_ignore
-        ):
-            robots_to_control.remove(robot)
-        if not isinstance(robot, BaseManipulator):
-            logger.warning(
-                f"Robot {robot.name} is not a manipulator and is not supported for AI control. Skipping."
-            )
-            robots_to_control.remove(robot)
-
-    assert all(
-        isinstance(robot, BaseManipulator) for robot in robots_to_control
-    ), "All robots must be manipulators for AI control"
 
     # Get the modal host and port here
     _, _, server_info = await setup_ai_control(
@@ -1160,6 +1187,9 @@ async def start_ai_control(
     """
     Start the auto control by AI
     """
+    robots_to_control = select_ai_robots(
+        await rcm.robots, query.robot_serials, query.robot_serials_to_ignore
+    )
 
     if signal_leader_follower.is_in_loop():
         raise HTTPException(
@@ -1204,24 +1234,6 @@ async def start_ai_control(
         )
         .execute()
     )
-
-    robots_to_control = copy(await rcm.robots)
-    for robot in await rcm.robots:
-        if (
-            hasattr(robot, "SERIAL_ID")
-            and query.robot_serials_to_ignore is not None
-            and robot.SERIAL_ID in query.robot_serials_to_ignore
-        ):
-            robots_to_control.remove(robot)
-        if not isinstance(robot, BaseManipulator):
-            logger.warning(
-                f"Robot {robot.name} is not a manipulator and is not supported for AI control. Skipping."
-            )
-            robots_to_control.remove(robot)
-
-    assert all(
-        isinstance(robot, BaseManipulator) for robot in robots_to_control
-    ), "All robots must be manipulators for AI control"
 
     # Get the modal host and port here
     model, model_spawn_config, server_info = await setup_ai_control(

@@ -131,26 +131,34 @@ export const BUTTON_NAMES = [
 
 // ==================== UTILITY FUNCTIONS ====================
 
-export const robotIDFromName = (name?: string | null, serverStatus?: ServerStatus): number => {
+// null when the name is missing or names no connected robot: the caller then
+// sends nothing. There is no default robot.
+export const robotIDFromName = (name?: string | null, serverStatus?: ServerStatus): number | null => {
   if (name === undefined || name === null || !serverStatus?.robot_status) {
-    return 0;
+    return null;
   }
   const index = serverStatus.robot_status.findIndex(
     (robot) => robot.device_name === name,
   );
-  return index === -1 ? 0 : index;
+  return index === -1 ? null : (serverStatus.robot_status[index].robot_id ?? index);
 };
 
 export const postData = async (
   url: string, 
   data: Record<string, unknown>, 
-  queryParam?: Record<string, string | number>
+  queryParam?: Record<string, string | number | null>
 ) => {
+  // A null robot_id means no robot is named (see robotIDFromName): send nothing
+  if (queryParam && queryParam.robot_id === null) {
+    console.warn("No robot selected: nothing sent to", url);
+    return;
+  }
   try {
     let newUrl = url;
     if (queryParam) {
       const urlParams = new URLSearchParams();
       Object.entries(queryParam).forEach(([key, value]) => {
+        if (value === null) return;
         urlParams.append(key, value.toString());
       });
       if (urlParams.toString()) {

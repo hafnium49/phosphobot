@@ -703,8 +703,13 @@ class RecordingPlayRequest(BaseModel):
 
     robot_id: Optional[Union[int, List[int]]] = Field(
         None,
-        description="ID of the robot to play the episode on. If None, plays on all robots. If a list, plays on the robots with the given IDs.",
+        description="ID of the robot to play the episode on. If a list, plays on the robots with the given IDs. One of robot_id and robot_serials is required.",
         examples=[0, [0, 1]],
+    )
+    robot_serials: Optional[List[str]] = Field(
+        default=None,
+        description="Serials of the robots to play the episode on, after those of robot_id. One of robot_id and robot_serials is required.",
+        examples=[["5A68009540"]],
     )
     robot_serials_to_ignore: Optional[List[str]] = Field(
         None,
@@ -926,9 +931,14 @@ class StartServerRequest(BaseModel):
     """
 
     model_id: str = Field(..., description="Hugging Face model id to use")
+    robot_serials: Optional[List[str]] = Field(
+        default=None,
+        description="Serials of the robots to control. Required: no robot is controlled unless it is named.",
+        examples=[["5A68009540"]],
+    )
     robot_serials_to_ignore: Optional[List[str]] = Field(
         None,
-        description="List of robot serial ids to ignore. If set to None, controls all available robots.",
+        description="List of robot serial ids to ignore among robot_serials.",
         examples=[["/dev/ttyUSB0"]],
     )
     model_type: Literal["gr00t", "ACT", "pi0.5", "smolvla"] = Field(
@@ -953,9 +963,14 @@ class StartAIControlRequest(BaseModel):
         description="Speed of the AI control. 1.0 is normal speed, 0.5 is half speed, 2.0 is double speed. The highest speed is still bottlenecked by the GPU inference time.",
     )
 
+    robot_serials: Optional[List[str]] = Field(
+        default=None,
+        description="Serials of the robots to control. Required: no robot is controlled unless it is named.",
+        examples=[["5A68009540"]],
+    )
     robot_serials_to_ignore: Optional[List[str]] = Field(
         None,
-        description="List of robot serial ids to ignore. If set to None, controls all available robots.",
+        description="List of robot serial ids to ignore among robot_serials.",
         examples=[["/dev/ttyUSB0"]],
     )
     cameras_keys_mapping: Optional[Dict[str, int]] = Field(

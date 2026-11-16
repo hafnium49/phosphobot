@@ -10,9 +10,9 @@ when the list does), by `serial`, or by both; see RobotConnectionManager.resolve
 """
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import List, Optional
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException
 
 from phosphobot.models import BaseRobot
 from phosphobot.robot import RobotConnectionManager, get_rcm
@@ -51,3 +51,28 @@ async def arm_or_first(
     rcm: RobotConnectionManager = Depends(get_rcm),
 ) -> Arm:
     return await _arm(rcm, robot_id, serial, required=False)
+
+
+def robot_by_serial(robots: list, serial: str) -> BaseRobot:
+    """
+    The one robot of the list with this serial.
+    Refuses 'no_serial' and a serial held by two robots (400), and a serial that
+    no robot has (404).
+    """
+    if serial == "no_serial":
+        raise HTTPException(
+            status_code=400, detail="'no_serial' does not name a robot."
+        )
+    matches: List[BaseRobot] = [
+        robot for robot in robots if getattr(robot, "SERIAL_ID", None) == serial
+    ]
+    if len(matches) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Serial {serial} is held by {len(matches)} robots.",
+        )
+    if not matches:
+        raise HTTPException(
+            status_code=404, detail=f"No robot with serial {serial} connected."
+        )
+    return matches[0]
