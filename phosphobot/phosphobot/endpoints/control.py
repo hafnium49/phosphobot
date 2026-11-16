@@ -628,14 +628,37 @@ async def read_torque(
             detail="Robot does not support reading torque",
         )
 
+    bus_connected = bool(robot.is_connected)
+    if not bus_connected and not config.ONLY_SIMULATION:
+        raise HTTPException(
+            status_code=503, detail=f"arm {arm.serial} is not on the bus"
+        )
+
     current_torque = robot.current_torque()
 
-    # Replace NaN values with None and convert to list
+    if bus_connected:
+        failed = [
+            i
+            for i, torque in enumerate(current_torque)
+            if torque is None or np.isnan(torque)
+        ]
+        if failed:
+            raise HTTPException(
+                status_code=502,
+                detail=f"bus read failed for arm {arm.serial} (positions {failed} of the servo list)",
+            )
+
+    # Simulation only: replace NaN values with 0. Convert to list
     current_torque = [
         float(torque) if not np.isnan(torque) else 0 for torque in current_torque
     ]
 
-    return TorqueReadResponse(current_torque=current_torque)
+    return TorqueReadResponse(
+        current_torque=current_torque,
+        robot_id=arm.robot_id,
+        serial=arm.serial,
+        source="hardware" if bus_connected else "simulation",
+    )
 
 
 @router.post(

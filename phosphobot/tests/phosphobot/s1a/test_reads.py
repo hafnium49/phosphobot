@@ -166,3 +166,30 @@ def test_by_id_bus_read_does_not_unwrap(monkeypatch):
     )
     assert words == [1] * 6
     assert bus.track_positions["Present_Position"]["prev"] == [4095] * 6
+
+
+def test_torque_read_is_per_servo_and_fails_loudly(client, arms):
+    arms[1].motors_bus.regs["Present_Current"] = [11, 12, 13, 14, 15, 16]
+    r = client.post("/torque/read", params=R1)
+    b = r.json()
+    assert r.status_code == 200 and b["current_torque"] == [11, 12, 13, 14, 15, 16]
+    assert (b["robot_id"], b["serial"], b["source"]) == (1, "5A68009540", "hardware")
+    arms[1].motors_bus.fail = {"read:Present_Current"}
+    assert client.post("/torque/read", params=R1).status_code == 502
+    arms[1].is_connected = False
+    assert client.post("/torque/read", params=R1).status_code == 503
+
+
+def test_current_torque_is_none_for_a_servo_whose_read_failed(arms):
+    arm = arms[1]
+    arm.motors_bus.regs["Present_Current"] = [11, 12, 13, 14, 15, 16]
+    assert list(arm.current_torque()) == [11, 12, 13, 14, 15, 16]
+    arm.read_motor_torque = lambda servo_id: None if servo_id == 3 else 7.0
+    assert list(arm.current_torque()) == [7.0, 7.0, None, 7.0, 7.0, 7.0]
+
+
+def test_only_simulation_torque_read_still_answers(client, arms, only_simulation):
+    arms[1].is_connected = False
+    r = client.post("/torque/read", params=R1)
+    assert r.status_code == 200 and r.json()["source"] == "simulation"
+    assert len(r.json()["current_torque"]) == 6

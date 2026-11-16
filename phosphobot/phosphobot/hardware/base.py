@@ -1260,20 +1260,27 @@ class BaseManipulator(BaseRobot):
         Read the current torque q of the joints of the robot.
 
         Returns :
-            current_torque : np.ndarray of the current torque of each joint
+            current_torque : np.ndarray of the current torque of each joint.
+                When the robot is connected, the values are read from the servos
+                self.SERVO_IDS, in that order, and the value of a servo whose read
+                failed is None (the array is then of dtype object).
         """
 
-        current_torque = np.zeros(self.num_actuated_joints)
-        # Read present position for each motor
+        # Read present current for each motor
         if self.is_connected:
-            for idx, servo_id in enumerate(self.actuated_joints):
+            servo_torques: List[Optional[float]] = []
+            for servo_id in self.SERVO_IDS:
                 joint_torque = self.read_motor_torque(servo_id)
-                if joint_torque is not None:
-                    current_torque[idx] = joint_torque
+                if joint_torque is None:
+                    logger.warning(f"None torque value for servo {servo_id}")
+                    servo_torques.append(None)
                 else:
-                    logger.warning("None torque value for joint ", servo_id)
-            return current_torque
+                    servo_torques.append(float(np.asarray(joint_torque).flat[0]))
+            if any(torque is None for torque in servo_torques):
+                return np.array(servo_torques, dtype=object)
+            return np.array(servo_torques, dtype=float)
 
+        current_torque = np.zeros(self.num_actuated_joints)
         # If the robot is not connected, we use the pybullet simulation
         # Retrieve joint angles using getJointStates
         for idx, joint_id in enumerate(self.actuated_joints):

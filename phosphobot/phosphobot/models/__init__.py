@@ -419,7 +419,13 @@ class TorqueReadResponse(BaseModel):
 
     current_torque: List[float] = Field(
         ...,
-        description="A list of length 6, with the current torque of each joint.",
+        description="A list of length 6, with the current torque of each joint, in servo order. From hardware, these are the raw Present_Current register values.",
+    )
+    robot_id: Optional[int] = Field(None, description="The robot that answered.")
+    serial: Optional[str] = Field(None, description="Serial of that robot.")
+    source: Optional[Literal["hardware", "simulation"]] = Field(
+        None,
+        description="'hardware' if the values were read from the servos during this request, 'simulation' in only-simulation mode.",
     )
 
 
