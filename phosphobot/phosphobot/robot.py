@@ -403,13 +403,24 @@ class RobotConnectionManager:
                 detail=f"Robot ID {robot_id} is out of range. Only {len(self._all_robots)} robots connected.",
             )
 
-        robot = await self.get_robot(robot_id=robot_id)
+        await self.remove_robot(self._all_robots[robot_id])
+
+    async def remove_robot(self, robot: BaseRobot) -> None:
+        """
+        Disconnect this robot and remove it from the list.
+        For a caller that has already resolved the robot: no id is looked up again.
+        """
+        if robot not in self._all_robots:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Robot {robot.name} is not in the list of robots anymore.",
+            )
         robot.disconnect()
         self._all_robots.remove(robot)
         if robot in self._manually_added_robots:
             # Remove from manually added robots if it was added manually
             self._manually_added_robots.remove(robot)
-        logger.success(f"Disconnected and removed robot with ID {robot_id}.")
+        logger.success(f"Disconnected and removed robot {robot.name}.")
 
 
 @lru_cache()

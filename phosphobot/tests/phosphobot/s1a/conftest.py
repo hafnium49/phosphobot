@@ -6,7 +6,8 @@ is ever opened (see the autouse guard in tests/phosphobot/conftest.py), and the
 endpoints run in a bare FastAPI app, without phosphobot.app and its startup.
 """
 
-from typing import Any, Iterator, List, Optional, Union
+import time
+from typing import Any, Callable, Iterator, List, Optional, Union
 
 import numpy as np
 import pybullet
@@ -142,19 +143,60 @@ class FakeRCM(RobotConnectionManager):
         return self._all_robots
 
 
+class _Port:
+    def __init__(self, device: str) -> None:
+        self.device = device
+
+
+class RescanRCM(RobotConnectionManager):
+    """
+    A RobotConnectionManager whose next port scan finds other ports, as after a USB
+    drop or re-attach: `robots` and `resolve` are the real ones, and the rebuilt
+    list is `new`. Only the scan and the construction of the robots are faked.
+    Nobody has scanned since the list was `old`.
+    """
+
+    def __init__(self, old: list, new: list) -> None:
+        super().__init__()
+        self._all_robots = list(old)
+        self._new = list(new)
+        self.available_ports = [_Port("/dev/fake0"), _Port("/dev/fake1")]  # type: ignore
+        self.last_scan_time = 0  # more than 1 s ago: the next `robots` scans
+
+    def __del__(self) -> None:
+        pass
+
+    def _scan_ports(self) -> tuple[list, list]:
+        self.last_scan_time = time.time()
+        return [_Port("/dev/fake2"), _Port("/dev/fake3")], []
+
+    async def _find_robots(self) -> None:
+        self._all_robots = list(self._new)
+
+
 @pytest.fixture
-def arms(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[SO100Hardware]]:
+def arm_factory(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..., SO100Hardware]]:
     # The simulation is one world per process, stepped by a background thread. The
     # older tests of this suite read it while steps may still be pending, so these
     # tests ask for no steps and take their robots out of the world when they end.
     # They need no physics.
     monkeypatch.setattr(get_sim(), "step", lambda steps=60: None)
-    both = [make_arm(LEFT_SERIAL), make_arm(RIGHT_SERIAL)]
-    yield both
-    for arm in both:
+    made: list[SO100Hardware] = []
+
+    def factory(serial: str, connected: bool = True) -> SO100Hardware:
+        made.append(make_arm(serial, connected))
+        return made[-1]
+
+    yield factory
+    for arm in made:
         # BaseManipulator.__del__ moves a connected arm to sleep: nothing to do here
         arm.is_connected = False
         pybullet.removeBody(arm.p_robot_id)
+
+
+@pytest.fixture
+def arms(arm_factory: Callable[..., SO100Hardware]) -> list[SO100Hardware]:
+    return [arm_factory(LEFT_SERIAL), arm_factory(RIGHT_SERIAL)]
 
 
 @pytest.fixture(autouse=True)
@@ -176,9 +218,8 @@ def _never(what: str) -> Any:
     return never
 
 
-@pytest.fixture
-def client(arms: list[SO100Hardware]) -> Iterator[TestClient]:
-    rcm = FakeRCM(arms)
+def client_for(rcm: RobotConnectionManager) -> TestClient:
+    """A test client of the control and recording endpoints over this manager."""
     teleop_manager = TeleopManager(rcm=rcm)
     app = FastAPI()
     app.include_router(control.router)
@@ -188,5 +229,10 @@ def client(arms: list[SO100Hardware]) -> Iterator[TestClient]:
     # The real ones open the cameras
     app.dependency_overrides[get_all_cameras] = _never("the cameras")
     app.dependency_overrides[get_recorder] = lambda: object()
-    with TestClient(app) as test_client:
+    return TestClient(app)
+
+
+@pytest.fixture
+def client(arms: list[SO100Hardware]) -> Iterator[TestClient]:
+    with client_for(FakeRCM(arms)) as test_client:
         yield test_client

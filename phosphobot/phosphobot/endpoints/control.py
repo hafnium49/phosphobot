@@ -91,6 +91,18 @@ signal_leader_follower = ControlSignal()
 signal_vr_control = ControlSignal()
 
 
+def _arm_left_the_list(arm: Arm, what: str) -> HTTPException:
+    """
+    409 for a request whose arm was resolved and then left the list of robots (the
+    list was rebuilt by a port scan during the request). The request is never
+    carried out on whatever now holds the same robot_id.
+    """
+    return HTTPException(
+        status_code=409,
+        detail=f"arm {arm.serial} (robot_id {arm.robot_id}) left the list of robots during the request: {what}. Read /status and send the request again.",
+    )
+
+
 def _bus_write_or_refuse(done: Optional[bool], arm: Arm, failure: str) -> Optional[bool]:
     """
     Turn what a robot said about a bus operation into the `bus_write` field of the
@@ -125,7 +137,8 @@ async def move_init(
     """
     Initialize the robot to its initial position before starting the teleoperation.
     """
-    await teleop_manager.move_init(robot_id=arm.robot_id)
+    if not await teleop_manager.move_init(robot=arm.robot):
+        raise _arm_left_the_list(arm, "nothing was initialised")
     return StatusResponse()
 
 
@@ -1444,7 +1457,7 @@ async def disconnect_robot(
     """
     robot_id = arm.robot_id
     try:
-        await rcm.remove_connection(robot_id=robot_id)
+        await rcm.remove_robot(arm.robot)
         return StatusResponse(
             status="ok",
             message=f"Robot connection to {robot_id} removed successfully",

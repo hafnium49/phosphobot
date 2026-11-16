@@ -123,42 +123,71 @@ class TeleopManager:
 
         return None
 
-    async def move_init(self, robot_id: Optional[int] = None) -> None:
+    async def move_init(
+        self, robot_id: Optional[int] = None, robot: Optional[BaseRobot] = None
+    ) -> bool:
         """
         Move the robot to the initial position.
+
+        Args:
+            robot: Initialise this robot and no other. A caller that has resolved
+                the robot of a request passes the robot itself: a robot_id is a
+                position in the list of robots, and the list can be rebuilt (USB
+                drop or re-attach) between the request and this call.
+            robot_id: Initialise the robot at this position of the list as it is
+                now. If neither is given, every robot is initialised.
+
+        Returns:
+            False when `robot` is no longer in the list of robots: nothing was
+            initialised. True otherwise.
         """
         if self.is_initializing:
             logger.debug("Initialization already in progress, skipping move_init")
-            return
+            return True
 
         self.is_initializing = True
-        for i, robot in enumerate(await self.rcm.robots):
-            logger.debug(f"Initializing robot {i}: {robot.name}")
-            if robot_id is not None and i != robot_id:
-                continue
-            # For Agilex Piper, we need to connect after enabling torque
-            if robot.name == "agilex-piper" and not robot.is_connected:
-                await robot.connect()
-            await robot.move_to_initial_position()
+        try:
+            # The list is read once: every step below acts on these robots
+            robots = list(await self.rcm.robots)
+            if robot is not None:
+                if robot not in robots:
+                    logger.warning(
+                        f"Robot {robot.name} is not in the list of robots anymore; not initialising"
+                    )
+                    return False
+                targets = [robot]
+            else:
+                targets = [
+                    r for i, r in enumerate(robots) if robot_id is None or i == robot_id
+                ]
 
-        # Hard block the code to wait for the robot to reach the initial position
-        if any(robot.name == "agilex-piper" for robot in (await self.rcm.robots)):
-            await asyncio.sleep(0.5)
-        else:
-            await asyncio.sleep(0.3)
+            for target in targets:
+                logger.debug(f"Initializing robot {target.name}")
+                # For Agilex Piper, we need to connect after enabling torque
+                if target.name == "agilex-piper" and not target.is_connected:
+                    await target.connect()
+                await target.move_to_initial_position()
 
-        for i, robot in enumerate(await self.rcm.robots):
-            logger.debug(f"Setting initial position for robot {i}: {robot.name}")
-            if robot_id is not None and i != robot_id:
-                continue
-            if hasattr(robot, "forward_kinematics"):
-                initial_position, initial_orientation_rad = robot.forward_kinematics()
-                robot.initial_position = initial_position
-                robot.initial_orientation_rad = initial_orientation_rad
+            # Hard block the code to wait for the robot to reach the initial position
+            if any(r.name == "agilex-piper" for r in robots):
+                await asyncio.sleep(0.5)
+            else:
+                await asyncio.sleep(0.3)
 
-        logger.debug("All robots initialized")
-        self._robots = copy(await self.rcm.robots)
-        self.is_initializing = False
+            for target in targets:
+                logger.debug(f"Setting initial position for robot {target.name}")
+                if hasattr(target, "forward_kinematics"):
+                    initial_position, initial_orientation_rad = (
+                        target.forward_kinematics()
+                    )
+                    target.initial_position = initial_position
+                    target.initial_orientation_rad = initial_orientation_rad
+
+            logger.debug("All robots initialized")
+            self._robots = copy(await self.rcm.robots)
+        finally:
+            self.is_initializing = False
+        return True
 
     async def _process_control_data_manipulator(
         self, control_data: AppControlData, robot: BaseManipulator
@@ -169,13 +198,8 @@ class TeleopManager:
         """
         if robot.initial_position is None or robot.initial_orientation_rad is None:
             # Initialise this robot and no other
-            robots = await self.rcm.robots
-            if robot not in robots:
-                logger.warning(
-                    f"Robot {robot.name} is not in the list of robots anymore; not initialising, skipping this command"
-                )
+            if not await self.move_init(robot=robot):
                 return False
-            await self.move_init(robot_id=robots.index(robot))
         (
             target_pos,
             target_orient_deg,
