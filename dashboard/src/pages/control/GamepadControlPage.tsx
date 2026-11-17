@@ -1410,7 +1410,7 @@ export function GamepadControl() {
                               <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
                               <span className="font-medium">
                                 {pair.robot_name} (ID:{" "}
-                                {robotIDFromName(pair.robot_name, serverStatus)}
+                                {robotIDFromName(pair.robot_name, serverStatus) ?? "?"}
                                 )
                               </span>
                             </div>
@@ -1512,7 +1512,7 @@ export function GamepadControl() {
                                       className="text-xs"
                                     >
                                       {robotName} (ID:{" "}
-                                      {robotIDFromName(robotName, serverStatus)}
+                                      {robotIDFromName(robotName, serverStatus) ?? "?"}
                                       )
                                     </Badge>
                                   ),

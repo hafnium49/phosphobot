@@ -67,6 +67,12 @@ class SO100Hardware(BaseManipulator):
 
     _gravity_task: Optional[asyncio.Task] = None
 
+    # Last Torque_Enable read from the bus: (values, time.monotonic() of the read).
+    # Dropped by every torque write and by disconnect.
+    _torque_enabled_cache: Optional[Tuple[List[bool], float]] = None
+    # time.monotonic() of the last successful bus read of all positions
+    last_position_read_monotonic: Optional[float] = None
+
     @property
     def servo_id_to_motor_name(self) -> Dict[int, str]:
         output: Dict[int, str] = {cast(int, v[0]): k for k, v in self.motors.items()}
@@ -131,14 +137,104 @@ class SO100Hardware(BaseManipulator):
         except Exception as e:
             logger.warning(f"Error disconnecting motors: {e}")
         self.is_connected = False
+        self._torque_enabled_cache = None
 
-    def enable_torque(self) -> None:
+    def read_torque_enabled(
+        self, max_age_s: float = 0.25
+    ) -> Tuple[Optional[List[bool]], Optional[float]]:
+        """
+        Read Torque_Enable of the six servos, in servo order.
+
+        One bus read serves every caller for max_age_s seconds.
+
+        Returns the values and their age in seconds, or (None, None) when the arm
+        is off the bus or the read failed.
+        """
         if not self.is_connected:
-            return None
+            return None, None
+
+        cache = self._torque_enabled_cache
+        if cache is not None:
+            age_s = time.monotonic() - cache[1]
+            if age_s <= max_age_s:
+                return cache[0], age_s
+
+        try:
+            torque_status = self.motors_bus.read(
+                "Torque_Enable", motor_names=list(self.motors.keys())
+            )
+            self.motor_communication_errors = 0
+        except Exception as e:
+            logger.warning(f"Error reading torque status: {e}")
+            self.update_motor_errors()
+            return None, None
+
+        torque_enabled = [bool(value) for value in torque_status]
+        self._torque_enabled_cache = (torque_enabled, time.monotonic())
+        return torque_enabled, 0.0
+
+    def read_raw(self) -> dict:
+        """
+        Read present position, goal position and torque enable straight from the
+        servos, addressed by servo id.
+
+        The positions are the 16-bit words as read (bit 15 is the sign, not
+        decoded): this path applies neither the rotation unwrapping of
+        FeetechMotorsBus.read nor the calibration.
+
+        Raises ConnectionError when the arm is off the bus or any read failed.
+        """
+        if not self.is_connected:
+            raise ConnectionError(
+                f"arm {getattr(self, 'SERIAL_ID', None)} is not on the bus"
+            )
+
+        words = {}
+        try:
+            for data_name in ("Present_Position", "Goal_Position", "Torque_Enable"):
+                words[data_name] = self.motors_bus.read_with_motor_ids(
+                    self.motors_bus.motor_models, list(self.SERVO_IDS), data_name
+                )
+            self.motor_communication_errors = 0
+        except Exception as e:
+            logger.warning(f"Error reading raw registers: {e}")
+            self.update_motor_errors()
+            raise ConnectionError(f"raw read failed: {e}") from e
+
+        return {
+            "present_position": [int(word) for word in words["Present_Position"]],
+            "goal_position": [int(word) for word in words["Goal_Position"]],
+            "torque_enabled": [bool(word) for word in words["Torque_Enable"]],
+        }
+
+    def _torque_reads_back_as(self, enabled: bool) -> bool:
+        """
+        Read Torque_Enable from the bus (never from the cache) and compare.
+        """
+        torque_enabled, _ = self.read_torque_enabled(max_age_s=0)
+        if torque_enabled is None:
+            return False
+        if any(value != enabled for value in torque_enabled):
+            logger.warning(
+                f"Torque_Enable read back {torque_enabled}, wanted {enabled} on all servos"
+            )
+            return False
+        return True
+
+    def enable_torque(self) -> bool:
+        """
+        Enable torque and write the PID gains of the calibration.
+
+        Returns True only when Torque_Enable reads back as 1 on all six servos and
+        no write failed. False when the arm is off the bus (nothing was written).
+        """
+        if not self.is_connected:
+            return False
         if self.config is None:
             logger.warning("Robot config is not initialized. Cannot enable torque.")
-            return None
+            return False
 
+        self._torque_enabled_cache = None
         try:
             self.motors_bus.write("Torque_Enable", 1)
             for servo_id, c in enumerate(self.config.pid_gains):
@@ -152,19 +248,27 @@ class SO100Hardware(BaseManipulator):
         except Exception as e:
             logger.warning(f"Error enabling torque: {e}")
             self.update_motor_errors()
-            return None
+            return False
+        return self._torque_reads_back_as(True)
 
-    def disable_torque(self) -> None:
-        # Disable torque
+    def disable_torque(self) -> bool:
+        """
+        Disable torque.
+
+        Returns True only when Torque_Enable reads back as 0 on all six servos.
+        False when the arm is off the bus (nothing was written).
+        """
         if not self.is_connected:
-            return None
+            return False
+        self._torque_enabled_cache = None
         try:
             self.motors_bus.write("Torque_Enable", 0)
             self.motor_communication_errors = 0
         except Exception as e:
             logger.warning(f"Error disabling torque: {e}")
             self.update_motor_errors()
-            return None
+            return False
+        return self._torque_reads_back_as(False)
 
     def _set_pid_gains_motors(
         self, servo_id: int, p_gain: int = 32, i_gain: int = 0, d_gain: int = 32
@@ -176,6 +280,9 @@ class SO100Hardware(BaseManipulator):
         :param p_gain: Proportional gain (0-255)
         :param i_gain: Integral gain (0-255)
         :param d_gain: Derivative gain (0-255)
+
+        Raises if the torque status cannot be read or a gain cannot be written:
+        the gains were then not set.
         """
         try:
             torque_status = self.motors_bus.read(
@@ -183,7 +290,7 @@ class SO100Hardware(BaseManipulator):
             )
         except Exception as e:
             logger.warning(f"Error reading torque status: {e}")
-            return
+            raise
 
         if torque_status.all() == 1:
             self.motors_bus.write(
@@ -206,6 +313,25 @@ class SO100Hardware(BaseManipulator):
             logger.warning(
                 "Motors torque is disabled. Motors must have torque enabled to change PID coefficients. Enable torque first."
             )
+
+    def _try_set_pid_gains_motors(
+        self, servo_id: int, p_gain: int = 32, i_gain: int = 0, d_gain: int = 32
+    ) -> bool:
+        """
+        _set_pid_gains_motors for the loops that set the gains of several servos
+        and must go on (gravity compensation, leader-follower): a servo whose gains
+        could not be set is logged and skipped.
+
+        Returns False for that servo.
+        """
+        try:
+            self._set_pid_gains_motors(
+                servo_id, p_gain=p_gain, i_gain=i_gain, d_gain=d_gain
+            )
+            return True
+        except Exception as e:
+            logger.warning(f"PID gains of servo {servo_id} were not set: {e}")
+            return False
 
     def _get_pid_gains_motor(self, servo_id: int) -> Optional[Tuple[int, int, int]]:
         """
@@ -261,12 +387,15 @@ class SO100Hardware(BaseManipulator):
             self.update_motor_errors()
             return None
 
-    def write_motor_position(self, servo_id: int, units: int, **kwargs: Any) -> None:
+    def write_motor_position(self, servo_id: int, units: int, **kwargs: Any) -> bool:
         """
         Write a position to a Feetech servo.
+
+        Returns True when the bus write was issued without error, False when it
+        was skipped (arm off the bus) or raised.
         """
         if not self.is_connected:
-            return None
+            return False
 
         try:
             self.motors_bus.write(
@@ -275,18 +404,23 @@ class SO100Hardware(BaseManipulator):
                 motor_names=self.servo_id_to_motor_name[servo_id],
             )
             self.motor_communication_errors = 0
+            return True
         except Exception as e:
             logger.warning(f"Error writing motor position: {e}")
             self.update_motor_errors()
+            return False
 
     def write_group_motor_position(
         self, q_target: np.ndarray, enable_gripper: bool = True
-    ) -> None:
+    ) -> bool:
         """
         Write a position to all motors of the robot.
+
+        Returns True when the bus write was issued without error, False when it
+        was skipped (arm off the bus) or raised.
         """
         if not self.is_connected:
-            return None
+            return False
 
         values = q_target.tolist()
         motor_names = list(self.motors.keys())
@@ -301,9 +435,11 @@ class SO100Hardware(BaseManipulator):
                 "Goal_Position", values=values, motor_names=motor_names
             )
             self.motor_communication_errors = 0
+            return True
         except Exception as e:
             logger.warning(f"Error writing motor position: {e}")
             self.update_motor_errors()
+            return False
 
     def read_group_motor_position(self) -> np.ndarray:
         """
@@ -318,6 +454,7 @@ class SO100Hardware(BaseManipulator):
                 "Present_Position", motor_names=motor_names
             )
             self.motor_communication_errors = 0
+            self.last_position_read_monotonic = time.monotonic()
         except Exception as e:
             logger.warning(f"Error reading motor position: {e}")
             self.update_motor_errors()
@@ -365,10 +502,20 @@ class SO100Hardware(BaseManipulator):
 
     def status(self) -> RobotConfigStatus:
         temperature = self.current_temperature()
+        torque_enabled, torque_age_s = self.read_torque_enabled()
         return RobotConfigStatus(
             name=self.name,
             device_name=getattr(self, "SERIAL_ID", None),
             temperature=temperature,
+            serial=getattr(self, "SERIAL_ID", None),
+            bus_connected=bool(self.is_connected),
+            # Where /joints/read would take the positions from right now
+            readback_source=(
+                "hardware" if self.is_connected and not self.is_moving else "simulation"
+            ),
+            torque_enabled=torque_enabled,
+            torque_age_ms=None if torque_age_s is None else torque_age_s * 1000,
+            status_unix_s=time.time(),
         )
 
     def read_motor_temperature(
@@ -584,6 +731,7 @@ class SO100Hardware(BaseManipulator):
             logger.warning("Robot is not connected.")
             return None
 
+        self._torque_enabled_cache = None
         self.motors_bus.write("Torque_Enable", 128)
         time.sleep(1)
 
@@ -595,6 +743,16 @@ class SO100Hardware(BaseManipulator):
         Background task that implements gravity compensation control:
         - Applies gravity compensation to the robot
         """
+        try:
+            await self._gravity_compensation_loop(control_signal)
+        finally:
+            # However the loop ended, it is not running anymore
+            control_signal.stop()
+
+    async def _gravity_compensation_loop(
+        self,
+        control_signal: ControlSignal,
+    ) -> None:
         # Set up PID gains for leader's gravity compensation
         current_voltage = self.current_voltage()
         if current_voltage is None:
@@ -623,7 +781,7 @@ class SO100Hardware(BaseManipulator):
 
         # Apply custom PID gains to leader for all six motors
         for i in range(6):
-            self._set_pid_gains_motors(
+            self._try_set_pid_gains_motors(
                 servo_id=i + 1,
                 p_gain=p_gains[i],
                 i_gain=0,
@@ -670,7 +828,7 @@ class SO100Hardware(BaseManipulator):
 
         # Cleanup: Reset leader's PID gains to default for all six motors
         for i in range(6):  # Changed from 4 to 6
-            self._set_pid_gains_motors(
+            self._try_set_pid_gains_motors(
                 servo_id=i + 1,
                 p_gain=default_p_gains[i],
                 i_gain=0,

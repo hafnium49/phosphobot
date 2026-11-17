@@ -15,15 +15,24 @@ from phosphobot.utils import get_home_app_path
 YAML_CONFIG_PATH = str(get_home_app_path() / "config.yaml")
 
 
+# Keys of the config file that set a field of the same name (no DEFAULT_ prefix)
+UNPREFIXED_CONFIG_KEYS = {"TELEOP_RIGHT_SERIAL", "TELEOP_LEFT_SERIAL"}
+
+
 def rename_keys_for_config(config_dict: dict) -> dict:
     """
     Rename the keys to correspond to the fields in the Configuration class.
     We write the keys in uppercase and add DEFAULT_ in front of them.
     """
-    return {
-        f"DEFAULT_{key.upper()}" if not key.startswith("DEFAULT_") else key: value
-        for key, value in config_dict.items()
-    }
+    renamed = {}
+    for key, value in config_dict.items():
+        if key.upper() in UNPREFIXED_CONFIG_KEYS:
+            renamed[key.upper()] = value
+        elif not key.startswith("DEFAULT_"):
+            renamed[f"DEFAULT_{key.upper()}"] = value
+        else:
+            renamed[key] = value
+    return renamed
 
 
 def remove_default_prefix(config_dict: dict) -> dict:
@@ -62,6 +71,11 @@ class Configuration(BaseModel):
     MAX_OPENCV_INDEX: int = 10
     # Adjust based on maximum expected CAN interfaces
     MAX_CAN_INTERFACES: int = 4
+
+    # Teleoperation without a robot_id (WebSocket, UDP): the serial of the arm that
+    # each controller moves. A controller whose serial is not set moves no arm.
+    TELEOP_RIGHT_SERIAL: Optional[str] = None
+    TELEOP_LEFT_SERIAL: Optional[str] = None
 
     # HF token
     HF_TOKEN_VALID: bool = False

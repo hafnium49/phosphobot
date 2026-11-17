@@ -2,9 +2,10 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { fetcher } from "@/lib/utils";
-import { fetchWithBaseUrl } from "@/lib/utils";
+import { fetchWithBaseUrl, onlyRobotId } from "@/lib/utils";
 import { ServerStatus } from "@/types";
 import { useState } from "react";
+import { toast } from "sonner";
 import useSWR from "swr";
 
 export function SingleArmReplay() {
@@ -19,14 +20,27 @@ export function SingleArmReplay() {
       await fetchWithBaseUrl("/gravity/stop", "POST");
       enableGravityControl(false);
     } else {
-      await fetchWithBaseUrl("/gravity/start", "POST");
+      // This page has no robot picker: it acts only when one robot is connected
+      const robotId = onlyRobotId(serverStatus);
+      if (robotId === null) {
+        toast.error(
+          "Gravity compensation needs exactly one connected robot. Nothing was sent.",
+        );
+        return;
+      }
+      await fetchWithBaseUrl(`/gravity/start?robot_id=${robotId}`, "POST");
       enableGravityControl(true);
     }
   };
 
   const handleDisableTorque = async () => {
-    fetchWithBaseUrl("/torque/toggle", "POST", {
-      torque_status: false,
+    // One request per robot, each naming its robot
+    (serverStatus?.robot_status ?? []).forEach((robot, index) => {
+      fetchWithBaseUrl(
+        `/torque/toggle?robot_id=${robot.robot_id ?? index}`,
+        "POST",
+        { torque_status: false },
+      );
     });
   };
 

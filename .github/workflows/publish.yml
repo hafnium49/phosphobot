@@ -274,6 +274,9 @@ jobs:
 
       - name: Run integration tests
         run: cd phosphobot && uv run pytest tests/api/
+        env:
+          # tests/api is skipped without this (see tests/api/conftest.py)
+          PHOSPHOBOT_API_TESTS_LIVE: "1"
         continue-on-error: false
 
       - name: Print server.log (always run) and upload as artifact
@@ -506,6 +509,9 @@ jobs:
 
       - name: Run integration tests
         run: cd phosphobot && uv run pytest tests/api/
+        env:
+          # tests/api is skipped without this (see tests/api/conftest.py)
+          PHOSPHOBOT_API_TESTS_LIVE: "1"
         continue-on-error: false
 
       - name: Print server.log (always run) and upload as artifact
@@ -916,6 +922,9 @@ jobs:
         run: |
           cd phosphobot
           uv run pytest tests/api/
+        env:
+          # tests/api is skipped without this (see tests/api/conftest.py)
+          PHOSPHOBOT_API_TESTS_LIVE: "1"
         continue-on-error: false
 
       - name: Publish to PyPI

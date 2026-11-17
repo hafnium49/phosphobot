@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useGlobalStore } from "@/lib/hooks";
 import { fetcher } from "@/lib/utils";
-import { fetchWithBaseUrl } from "@/lib/utils";
+import { fetchWithBaseUrl, onlyRobotId } from "@/lib/utils";
 import type { AdminSettings, ServerStatus } from "@/types";
 import {
   AlertCircle,
@@ -226,10 +226,19 @@ export function Recorder({
     if (isRecording || isPlaying) {
       return;
     }
+    // No robot picker here: replay on the only robot that is not a leader arm
+    const robotId = onlyRobotId(serverStatus, leaderArmSerialIds);
+    if (robotId === null) {
+      toast.error(
+        "Replay needs exactly one connected robot that is not a leader arm. Nothing was sent.",
+      );
+      return;
+    }
     setIsPlaying(true);
     toast.info("Starting replay...");
     const data = await fetchWithBaseUrl(`/recording/play`, "POST", {
       episode_path: null,
+      robot_id: robotId,
       robot_serials_to_ignore: leaderArmSerialIds ?? null,
     }).then((data) => {
       setIsPlaying(false);

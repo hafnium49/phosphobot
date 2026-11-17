@@ -5,17 +5,19 @@ from copy import copy
 from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
-from typing import Dict, Literal, Optional, Tuple, cast
+from typing import Any, Dict, List, Literal, Optional, Tuple, cast
 
 import numpy as np
 from fastapi import WebSocket
 from loguru import logger
 from pydantic import ValidationError
 
+from phosphobot.configs import config
 from phosphobot.hardware import BaseManipulator
 from phosphobot.hardware.base import BaseMobileRobot
 from phosphobot.models import (
     AppControlData,
+    BaseRobot,
     RobotStatus,
     TeleopSettings,
     UDPServerInformationResponse,
@@ -81,29 +83,32 @@ class TeleopManager:
     async def get_manipulator_robot(self, source: str) -> Optional[BaseManipulator]:
         """
         Get the manipulator robot based on source
-        - "right" returns the first manipulator robot
-        - "left" returns the second manipulator robot
+        - "right" returns the manipulator whose serial is config.TELEOP_RIGHT_SERIAL
+        - "left" returns the manipulator whose serial is config.TELEOP_LEFT_SERIAL
 
-        This is a convention because 90% of people are right-handed.
+        Returns None when that serial is not set or does not name exactly one
+        manipulator: a position in the list of robots never selects an arm.
         """
-        right_robot = None
-        left_robot = None
-
-        for robot in self._robots:
-            if isinstance(robot, BaseManipulator):
-                if right_robot is None:
-                    right_robot = robot
-                elif left_robot is None:
-                    left_robot = robot
-                    break
-
         if source == "right":
-            return right_robot
+            serial = config.TELEOP_RIGHT_SERIAL
         elif source == "left":
-            return left_robot
+            serial = config.TELEOP_LEFT_SERIAL
         else:
             logger.error(f"Unknown source '{source}' for manipulator robot")
             return None
+
+        if serial is None or serial == "no_serial":
+            return None
+
+        matches = [
+            robot
+            for robot in self._robots
+            if isinstance(robot, BaseManipulator)
+            and getattr(robot, "SERIAL_ID", None) == serial
+        ]
+        if len(matches) != 1:
+            return None
+        return matches[0]
 
     async def get_mobile_robot(self, source: str) -> Optional[BaseMobileRobot]:
         """
@@ -118,42 +123,72 @@ class TeleopManager:
 
         return None
 
-    async def move_init(self, robot_id: Optional[int] = None) -> None:
+    async def move_init(
+        self, robot_id: Optional[int] = None, robot: Optional[BaseRobot] = None
+    ) -> bool:
         """
         Move the robot to the initial position.
+
+        Args:
+            robot: Initialise this robot and no other. A caller that has resolved
+                the robot of a request passes the robot itself: a robot_id is a
+                position in the list of robots, and the list can be rebuilt (USB
+                drop or re-attach) between the request and this call.
+            robot_id: Initialise the robot at this position of the list as it is
+                now. If neither is given, every robot is initialised.
+
+        Returns:
+            False when `robot` is no longer in the list of robots: nothing was
+            initialised. True otherwise.
         """
         if self.is_initializing:
             logger.debug("Initialization already in progress, skipping move_init")
-            return
+            return True
 
         self.is_initializing = True
-        for i, robot in enumerate(await self.rcm.robots):
-            logger.debug(f"Initializing robot {i}: {robot.name}")
-            if robot_id is not None and i != robot_id:
-                continue
-            # For Agilex Piper, we need to connect after enabling torque
-            if robot.name == "agilex-piper" and not robot.is_connected:
-                await robot.connect()
-            await robot.move_to_initial_position()
+        try:
+            # The list is read once: every step below acts on these robots
+            robots = list(await self.rcm.robots)
+            targets: List[Any]
+            if robot is not None:
+                if robot not in robots:
+                    logger.warning(
+                        f"Robot {robot.name} is not in the list of robots anymore; not initialising"
+                    )
+                    return False
+                targets = [robot]
+            else:
+                targets = [
+                    r for i, r in enumerate(robots) if robot_id is None or i == robot_id
+                ]
 
-        # Hard block the code to wait for the robot to reach the initial position
-        if any(robot.name == "agilex-piper" for robot in (await self.rcm.robots)):
-            await asyncio.sleep(0.5)
-        else:
-            await asyncio.sleep(0.3)
+            for target in targets:
+                logger.debug(f"Initializing robot {target.name}")
+                # For Agilex Piper, we need to connect after enabling torque
+                if target.name == "agilex-piper" and not target.is_connected:
+                    await target.connect()
+                await target.move_to_initial_position()
 
-        for i, robot in enumerate(await self.rcm.robots):
-            logger.debug(f"Setting initial position for robot {i}: {robot.name}")
-            if robot_id is not None and i != robot_id:
-                continue
-            if hasattr(robot, "forward_kinematics"):
-                initial_position, initial_orientation_rad = robot.forward_kinematics()
-                robot.initial_position = initial_position
-                robot.initial_orientation_rad = initial_orientation_rad
+            # Hard block the code to wait for the robot to reach the initial position
+            if any(r.name == "agilex-piper" for r in robots):
+                await asyncio.sleep(0.5)
+            else:
+                await asyncio.sleep(0.3)
 
-        logger.debug("All robots initialized")
-        self._robots = copy(await self.rcm.robots)
-        self.is_initializing = False
+            for target in targets:
+                logger.debug(f"Setting initial position for robot {target.name}")
+                if hasattr(target, "forward_kinematics"):
+                    initial_position, initial_orientation_rad = (
+                        target.forward_kinematics()
+                    )
+                    target.initial_position = initial_position
+                    target.initial_orientation_rad = initial_orientation_rad
+
+            logger.debug("All robots initialized")
+            self._robots = copy(await self.rcm.robots)
+        finally:
+            self.is_initializing = False
+        return True
 
     async def _process_control_data_manipulator(
         self, control_data: AppControlData, robot: BaseManipulator
@@ -163,7 +198,9 @@ class TeleopManager:
         We then move the robot to that position and orientation.
         """
         if robot.initial_position is None or robot.initial_orientation_rad is None:
-            await self.move_init()
+            # Initialise this robot and no other
+            if not await self.move_init(robot=robot):
+                return False
         (
             target_pos,
             target_orient_deg,
@@ -268,9 +305,16 @@ class TeleopManager:
             )
             return False
 
-    async def process_control_data(self, control_data: AppControlData) -> bool:
+    async def process_control_data(
+        self, control_data: AppControlData, robot: Optional[BaseRobot] = None
+    ) -> bool:
         """
         Process control data
+
+        Args:
+            robot: The robot to move, when the caller has named one (/move/teleop).
+                If None, the robot is self.robot_id in the list of robots, or else
+                the one that control_data.source selects.
         Returns:
             True if the command was processed successfully, False otherwise.
         """
@@ -296,21 +340,23 @@ class TeleopManager:
             state.last_timestamp = time.time()
 
         # If robot_id is set, get the specific robot and move it accordingly
-        if self.robot_id is not None:
+        if robot is None and self.robot_id is not None:
             # robot = await self.rcm.get_robot(self.robot_id)
             try:
                 robot = self._robots[self.robot_id]
             except IndexError:
                 logger.warning(f"Robot ID {self.robot_id} not found in the robot list")
                 return False
+        if robot is not None:
             if isinstance(robot, BaseManipulator):
-                await self._process_control_data_manipulator(control_data, robot)
-                return True
+                return await self._process_control_data_manipulator(
+                    control_data, robot
+                )
             elif isinstance(robot, BaseMobileRobot):
                 await self._process_control_data_mobile_robot(control_data, robot)
                 return True
             else:
-                logger.error(f"Unknown robot type for robot_id {self.robot_id}")
+                logger.error(f"Unknown robot type for robot {robot.name}")
                 return False
 
         # Otherwise (ex: VR control), fetch the manipulators and mobile robots based on control_data.source

@@ -46,7 +46,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useGlobalStore } from "@/lib/hooks";
-import { fetchWithBaseUrl, fetcher } from "@/lib/utils";
+import { fetchWithBaseUrl, fetcher, onlyRobotId } from "@/lib/utils";
 import { DatasetInfoResponse, ServerStatus } from "@/types";
 import {
   AlertCircle,
@@ -541,8 +541,17 @@ export function BrowsePage() {
     const episode_path = data.episode_paths[parseInt(selectedEpisode)];
     if (!episode_path) return;
     const robot_serials_to_ignore = leaderArmSerialIds ?? null;
+    // No robot picker here: replay on the only robot that is not a leader arm
+    const robot_id = onlyRobotId(serverStatus, leaderArmSerialIds);
+    if (robot_id === null) {
+      toast.error(
+        "Replay needs exactly one connected robot that is not a leader arm. Nothing was sent.",
+      );
+      return;
+    }
     fetchWithBaseUrl(`/recording/play`, "POST", {
       episode_path,
+      robot_id,
       robot_serials_to_ignore,
     });
   };

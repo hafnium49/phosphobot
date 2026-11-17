@@ -1,7 +1,7 @@
 import time
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any, List, Set
+from typing import Any, List, Optional, Set
 
 from async_property import async_property
 from fastapi import HTTPException
@@ -280,6 +280,66 @@ class RobotConnectionManager:
 
         return robot
 
+    async def resolve(
+        self, robot_id: Optional[int], serial: Optional[str], *, required: bool
+    ) -> tuple[int, BaseRobot]:
+        """
+        Find the one robot a request names, by list index, by serial, or by both.
+
+        robot_id is a position in the list of robots and changes when the list
+        does; a serial does not. When both are given they must name the same robot,
+        so a client holding a stale robot_id is refused instead of obeyed.
+        The serial is looked up in the current list on every call.
+
+        required: refuse a request that names no robot. Otherwise it means robot 0.
+        """
+        if robot_id is None and serial is None:
+            if required:
+                raise HTTPException(
+                    status_code=422, detail="robot_id or serial is required"
+                )
+            robot_id = 0
+
+        # As get_robot does: scan the ports only when the stored list cannot answer
+        robots = self._all_robots
+        if not robots or (robot_id is not None and robot_id >= len(robots)):
+            robots = await self.robots
+
+        if robot_id is not None and (robot_id < 0 or robot_id >= len(robots)):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Robot ID {robot_id} is out of range. Only {len(robots)} robots connected.",
+            )
+        if serial is None:
+            assert robot_id is not None
+            return robot_id, robots[robot_id]
+
+        if serial == "no_serial":
+            raise HTTPException(
+                status_code=400,
+                detail="'no_serial' does not name a robot. Use robot_id.",
+            )
+        matches = [
+            i
+            for i, robot in enumerate(robots)
+            if getattr(robot, "SERIAL_ID", None) == serial
+        ]
+        if len(matches) > 1:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Serial {serial} is held by {len(matches)} robots (robot_id {matches}).",
+            )
+        if not matches:
+            raise HTTPException(
+                status_code=404, detail=f"No robot with serial {serial} connected."
+            )
+        if robot_id is not None and robot_id != matches[0]:
+            raise HTTPException(
+                status_code=409,
+                detail=f"robot_id {robot_id} is {getattr(robots[robot_id], 'SERIAL_ID', None)}, not {serial}",
+            )
+        return matches[0], robots[matches[0]]
+
     def get_id_from_robot(self, robot: BaseRobot) -> int:
         """
         Return the ID of the robot.
@@ -291,8 +351,15 @@ class RobotConnectionManager:
         """
         Return the status of all robots. Used at server startup
         """
-        robots_status = [robot.status() for robot in await self.robots]
-        return [status for status in robots_status if status is not None]
+        robots_status = []
+        for robot_id, robot in enumerate(await self.robots):
+            status = robot.status()
+            if status is None:
+                continue
+            # Rows without a status are dropped: a row's position is not its id
+            status.robot_id = robot_id
+            robots_status.append(status)
+        return robots_status
 
     async def add_connection(
         self, robot_name: str, connection_details: dict[str, Any]
@@ -336,13 +403,24 @@ class RobotConnectionManager:
                 detail=f"Robot ID {robot_id} is out of range. Only {len(self._all_robots)} robots connected.",
             )
 
-        robot = await self.get_robot(robot_id=robot_id)
+        await self.remove_robot(self._all_robots[robot_id])
+
+    async def remove_robot(self, robot: BaseRobot) -> None:
+        """
+        Disconnect this robot and remove it from the list.
+        For a caller that has already resolved the robot: no id is looked up again.
+        """
+        if robot not in self._all_robots:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Robot {robot.name} is not in the list of robots anymore.",
+            )
         robot.disconnect()
         self._all_robots.remove(robot)
         if robot in self._manually_added_robots:
             # Remove from manually added robots if it was added manually
             self._manually_added_robots.remove(robot)
-        logger.success(f"Disconnected and removed robot with ID {robot_id}.")
+        logger.success(f"Disconnected and removed robot {robot.name}.")
 
 
 @lru_cache()

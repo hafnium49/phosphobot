@@ -64,7 +64,7 @@ def get_initial_end_effector_state():
     logger.info(f"[TEST] Status response: {status_response.json()}")
 
     # Move to intial position
-    requests.post(f"{BASE_URL}/move/init")
+    requests.post(f"{BASE_URL}/move/init", params={"robot_id": 0})
     # Wait for the robot to reach the initial position
     time.sleep(2)
 
@@ -93,6 +93,7 @@ def test_move_relative(get_initial_end_effector_state):
     """Test moving the robot in small increments."""
     move_response = requests.post(
         f"{BASE_URL}/move/relative",
+        params={"robot_id": 0},
         json={"x": 0.02, "y": 0, "z": 0, "rx": 0, "ry": 0, "rz": 0, "open": 0},
     )
     assert (
@@ -106,11 +107,13 @@ def test_move_relative(get_initial_end_effector_state):
     # Perform movement
     requests.post(
         f"{BASE_URL}/move/relative",
+        params={"robot_id": 0},
         json={"x": 0.02, "y": 0, "z": 0, "rx": 0, "ry": 0, "rz": 0, "open": 0},
     )
     time.sleep(2)
     requests.post(
         f"{BASE_URL}/move/relative",
+        params={"robot_id": 0},
         json={"x": -0.04, "y": 0, "z": 0, "rx": 0, "ry": 0, "rz": 0, "open": 0},
     )
     time.sleep(2)
@@ -691,7 +694,7 @@ def save_lerobot_recording(format: Literal["lerobot_v2", "lerobot_v2.1"]):
 
         make_request_with_retry(
             "POST",
-            f"{BASE_URL}/move/absolute",
+            f"{BASE_URL}/move/absolute?robot_id=0",
             json={"x": 5, "y": 5, "z": 5, "open": 0},
         )
 

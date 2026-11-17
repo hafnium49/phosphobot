@@ -82,18 +82,23 @@ export function JointControl() {
 
   const intervalRef = useRef<number | null>(null);
 
-  const robotIDFromName = (name?: string | null) => {
+  // null when the name is missing or names no connected robot: the caller then
+  // sends nothing. There is no default robot.
+  const robotIDFromName = (name?: string | null): number | null => {
     if (name === undefined || name === null || !serverStatus?.robot_status) {
-      return 0; // Default to the first robot
+      return null;
     }
     const index = serverStatus.robot_status.findIndex(
       (robot) => robot.device_name === name,
     );
-    return index === -1 ? 0 : index; // Return 0 if not found or first one
+    return index === -1
+      ? null
+      : (serverStatus.robot_status[index].robot_id ?? index);
   };
 
   const fetchJointPositions = async (): Promise<number[]> => {
     const robotId = robotIDFromName(selectedRobotName);
+    if (robotId === null) return jointPositions;
     const data = await fetchWithBaseUrl(
       `/joints/read?robot_id=${robotId}`,
       "POST",
@@ -107,6 +112,7 @@ export function JointControl() {
 
   const fetchJointTorques = async (): Promise<number[]> => {
     const robotId = robotIDFromName(selectedRobotName);
+    if (robotId === null) return jointTorques;
     const data = await fetchWithBaseUrl(
       `/torque/read?robot_id=${robotId}`,
       "POST",
@@ -116,6 +122,7 @@ export function JointControl() {
 
   const sendJointCommands = async () => {
     const robotId = robotIDFromName(selectedRobotName);
+    if (robotId === null) return;
     await fetchWithBaseUrl(`/joints/write?robot_id=${robotId}`, "POST", {
       angles: goalAngles,
       unit: "motor_units",

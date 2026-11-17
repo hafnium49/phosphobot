@@ -1,3 +1,4 @@
+import type { ServerStatus } from "@/types";
 import { type ClassValue, clsx } from "clsx";
 import { toast } from "sonner";
 import { twMerge } from "tailwind-merge";
@@ -72,4 +73,20 @@ const fetchWithBaseUrl = async (
   return undefined;
 };
 
-export { cn, fetcherSWR as fetcher, fetchWithBaseUrl };
+// The robot that a control without a robot picker acts on: the only connected
+// robot whose serial is not in `ignoredSerials`. null when there is none or more
+// than one: the caller then sends nothing. There is no default robot.
+const onlyRobotId = (
+  serverStatus?: ServerStatus | null,
+  ignoredSerials?: string[] | null,
+): number | null => {
+  const candidates = (serverStatus?.robot_status ?? [])
+    .map((robot, index) => ({ robot, id: robot.robot_id ?? index }))
+    .filter(
+      ({ robot }) =>
+        !(robot.device_name && ignoredSerials?.includes(robot.device_name)),
+    );
+  return candidates.length === 1 ? candidates[0].id : null;
+};
+
+export { cn, fetcherSWR as fetcher, fetchWithBaseUrl, onlyRobotId };

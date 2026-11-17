@@ -55,6 +55,10 @@ class ServerStatus(BaseModel):
     server_port: int = Field(
         ..., description="Port of the phosphobot server", examples=[80, 8020, 8021]
     )
+    truthful_api: int = Field(
+        default=1,
+        description="Version of the truthful command API: responses name the arm that answered, the source and the age of what they report; moving endpoints refuse a request without robot_id or serial.",
+    )
 
 
 class RobotStatus(BaseModel):
@@ -93,6 +97,8 @@ class EndEffectorPosition(BaseModel):
     ry: Optional[float] = Field(description="Absolute Yaw in degrees")
     rz: Optional[float] = Field(description="Absolute Roll in degrees")
     open: float = Field(description="0 for closed, 1 for open")
+    robot_id: Optional[int] = Field(default=None, description="The robot that answered.")
+    serial: Optional[str] = Field(default=None, description="Serial of that robot.")
 
 
 class MoveAbsoluteRequest(BaseModel):
@@ -356,6 +362,56 @@ class JointsReadResponse(BaseModel):
         "rad",
         description="The unit of the angles. Defaults to radian.",
     )
+    robot_id: int = Field(..., description="The robot that answered.")
+    serial: Optional[str] = Field(default=None, description="Serial of that robot.")
+    source: Literal["hardware", "simulation"] = Field(
+        ...,
+        description="'hardware' only if the angles were read from the bus during this request. 'simulation' otherwise (source 'sim' requested, robot moving, or only-simulation mode).",
+    )
+    bus_connected: bool = Field(
+        ..., description="Whether the robot is on its bus right now."
+    )
+    read_unix_s: Optional[float] = Field(
+        default=None, description="Unix time of the bus read. None for simulation."
+    )
+    read_age_ms: Optional[float] = Field(
+        default=None,
+        description="Age of the bus read when this response was built, in milliseconds. None for simulation.",
+    )
+    torque_enabled: Optional[List[bool]] = Field(
+        default=None,
+        description="Torque_Enable of each servo as read from the bus, in servo order. None if the robot is off the bus or the read failed.",
+    )
+    torque_age_ms: Optional[float] = Field(
+        default=None, description="Age of torque_enabled in milliseconds."
+    )
+
+
+class JointsReadRawResponse(BaseModel):
+    """
+    Response to the raw read of the servos of the robot. Never from simulation.
+    """
+
+    robot_id: int = Field(..., description="The robot that answered.")
+    serial: Optional[str] = Field(default=None, description="Serial of that robot.")
+    servo_ids: List[int] = Field(
+        ..., description="Servo ids, in the order of the lists below."
+    )
+    present_position: List[int] = Field(
+        ...,
+        description="Present_Position of each servo: the 16-bit word as read (bit 15 is the sign, not decoded). No unwrapping, no calibration.",
+    )
+    goal_position: List[int] = Field(
+        ..., description="Goal_Position of each servo: the 16-bit word as read."
+    )
+    torque_enabled: List[bool] = Field(
+        ..., description="Torque_Enable of each servo."
+    )
+    read_unix_s: float = Field(..., description="Unix time at the start of the read.")
+    read_age_ms: float = Field(
+        ...,
+        description="Time since the start of the read when this response was built, in milliseconds.",
+    )
 
 
 class TorqueReadResponse(BaseModel):
@@ -365,7 +421,13 @@ class TorqueReadResponse(BaseModel):
 
     current_torque: List[float] = Field(
         ...,
-        description="A list of length 6, with the current torque of each joint.",
+        description="A list of length 6, with the current torque of each joint, in servo order. From hardware, these are the raw Present_Current register values.",
+    )
+    robot_id: Optional[int] = Field(default=None, description="The robot that answered.")
+    serial: Optional[str] = Field(default=None, description="Serial of that robot.")
+    source: Optional[Literal["hardware", "simulation"]] = Field(
+        default=None,
+        description="'hardware' if the values were read from the servos during this request, 'simulation' in only-simulation mode.",
     )
 
 
@@ -378,6 +440,8 @@ class VoltageReadResponse(BaseModel):
         ...,
         description="A list of length 6, with the current voltage of each joint. If the robot is not connected, this will be None.",
     )
+    robot_id: Optional[int] = Field(default=None, description="The robot that answered.")
+    serial: Optional[str] = Field(default=None, description="Serial of that robot.")
 
 
 class TemperatureReadResponse(BaseModel):
@@ -389,6 +453,8 @@ class TemperatureReadResponse(BaseModel):
         ...,
         description=" A list of Temperature objects, one for each joint. If the robot is not connected, this will be None.",
     )
+    robot_id: Optional[int] = Field(default=None, description="The robot that answered.")
+    serial: Optional[str] = Field(default=None, description="Serial of that robot.")
 
 
 class TemperatureWriteRequest(BaseModel):
@@ -643,8 +709,13 @@ class RecordingPlayRequest(BaseModel):
 
     robot_id: Optional[Union[int, List[int]]] = Field(
         None,
-        description="ID of the robot to play the episode on. If None, plays on all robots. If a list, plays on the robots with the given IDs.",
+        description="ID of the robot to play the episode on. If a list, plays on the robots with the given IDs. One of robot_id and robot_serials is required.",
         examples=[0, [0, 1]],
+    )
+    robot_serials: Optional[List[str]] = Field(
+        default=None,
+        description="Serials of the robots to play the episode on, after those of robot_id. One of robot_id and robot_serials is required.",
+        examples=[["5A68009540"]],
     )
     robot_serials_to_ignore: Optional[List[str]] = Field(
         None,
@@ -866,9 +937,14 @@ class StartServerRequest(BaseModel):
     """
 
     model_id: str = Field(..., description="Hugging Face model id to use")
+    robot_serials: Optional[List[str]] = Field(
+        default=None,
+        description="Serials of the robots to control. Required: no robot is controlled unless it is named.",
+        examples=[["5A68009540"]],
+    )
     robot_serials_to_ignore: Optional[List[str]] = Field(
         None,
-        description="List of robot serial ids to ignore. If set to None, controls all available robots.",
+        description="List of robot serial ids to ignore among robot_serials.",
         examples=[["/dev/ttyUSB0"]],
     )
     model_type: Literal["gr00t", "ACT", "pi0.5", "smolvla"] = Field(
@@ -893,9 +969,14 @@ class StartAIControlRequest(BaseModel):
         description="Speed of the AI control. 1.0 is normal speed, 0.5 is half speed, 2.0 is double speed. The highest speed is still bottlenecked by the GPU inference time.",
     )
 
+    robot_serials: Optional[List[str]] = Field(
+        default=None,
+        description="Serials of the robots to control. Required: no robot is controlled unless it is named.",
+        examples=[["5A68009540"]],
+    )
     robot_serials_to_ignore: Optional[List[str]] = Field(
         None,
-        description="List of robot serial ids to ignore. If set to None, controls all available robots.",
+        description="List of robot serial ids to ignore among robot_serials.",
         examples=[["/dev/ttyUSB0"]],
     )
     cameras_keys_mapping: Optional[Dict[str, int]] = Field(
@@ -1059,10 +1140,20 @@ class RobotPairRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     leader_id: Optional[int] = Field(
-        ..., description="Serial number of the leader robot"
+        default=None,
+        description="robot_id of the leader robot. One of leader_id and leader_serial is required.",
     )
     follower_id: Optional[int] = Field(
-        ..., description="Serial number of the follower robot"
+        default=None,
+        description="robot_id of the follower robot. One of follower_id and follower_serial is required.",
+    )
+    leader_serial: Optional[str] = Field(
+        default=None,
+        description="Serial of the leader robot. If leader_id is also given, both must name the same robot.",
+    )
+    follower_serial: Optional[str] = Field(
+        default=None,
+        description="Serial of the follower robot. If follower_id is also given, both must name the same robot.",
     )
 
 

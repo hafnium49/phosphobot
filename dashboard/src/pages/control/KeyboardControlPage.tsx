@@ -94,18 +94,27 @@ export function KeyboardControl() {
     " ": { x: 0, y: 0, z: 0, rz: 0, rx: 0, ry: 0 }, // Placeholder, logic handled separately
   };
 
-  const robotIDFromName = (name?: string | null) => {
+  // null when the name is missing or names no connected robot: the caller then
+  // sends nothing. There is no default robot.
+  const robotIDFromName = (name?: string | null): number | null => {
     if (name === undefined || name === null || !serverStatus?.robot_status) {
-      return 0;
+      return null;
     }
     const index = serverStatus.robot_status.findIndex(
       (robot) => robot.device_name === name,
     );
-    return index === -1 ? 0 : index;
+    return index === -1
+      ? null
+      : (serverStatus.robot_status[index].robot_id ?? index);
   };
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const postData = async (url: string, data: any, queryParam?: any) => {
+    // A null robot_id means no robot is named (see robotIDFromName): send nothing
+    if (queryParam && queryParam.robot_id === null) {
+      console.warn("No robot selected: nothing sent to", url);
+      return;
+    }
     try {
       let newUrl = url;
       if (queryParam) {

@@ -1,6 +1,5 @@
 import os
-from copy import copy
-from typing import Dict, Literal
+from typing import Dict, List, Literal, Optional, Union
 
 from fastapi import (
     APIRouter,
@@ -12,6 +11,7 @@ from loguru import logger
 
 from phosphobot.camera import AllCameras, get_all_cameras
 from phosphobot.configs import config
+from phosphobot.endpoints.arm_select import robot_by_serial
 from phosphobot.hardware.base import BaseManipulator
 from phosphobot.models import (
     BaseDataset,
@@ -30,6 +30,44 @@ from phosphobot.robot import RobotConnectionManager, get_rcm
 from phosphobot.utils import background_task_log_exceptions, get_home_app_path
 
 router = APIRouter(tags=["recording"])
+
+
+def select_playback_robots(
+    robots: list,
+    robot_id: Union[int, List[int], None],
+    robot_serials: Optional[List[str]],
+) -> list:
+    """
+    The robots a playback request names: those of robot_id (positions in the list
+    of robots), then those of robot_serials. A request that names none is refused:
+    playback never falls back to every robot.
+    """
+    if robot_id is None:
+        robot_ids = []
+    elif isinstance(robot_id, int):
+        robot_ids = [robot_id]
+    else:
+        robot_ids = list(robot_id)
+
+    if not robot_ids and not robot_serials:
+        raise HTTPException(
+            status_code=422, detail="robot_id or robot_serials is required"
+        )
+
+    selected: list = []
+    for one_id in robot_ids:
+        if one_id < 0 or one_id >= len(robots):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Robot with ID {one_id} not found.",
+            )
+        if robots[one_id] not in selected:
+            selected.append(robots[one_id])
+    for serial in robot_serials or []:
+        robot = robot_by_serial(robots, serial)
+        if robot not in selected:
+            selected.append(robot)
+    return selected
 
 
 @router.post("/recording/start", response_model=StatusResponse)
@@ -295,6 +333,9 @@ async def play_recording(
     """
     Play a recorded episode.
     """
+    robots = select_playback_robots(
+        await rcm.robots, query.robot_id, query.robot_serials
+    )
 
     if query.episode_path is not None:
         if not os.path.exists(query.episode_path):
@@ -347,25 +388,6 @@ async def play_recording(
             status_code=400,
             detail="No episode path given and no episode stored in the recorder.",
         )
-
-    if isinstance(query.robot_id, int):
-        if query.robot_id >= len(await rcm.robots):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Robot with ID {query.robot_id} not found.",
-            )
-        robots = [await rcm.get_robot(query.robot_id)]
-    elif isinstance(query.robot_id, list):
-        robots = []
-        for robot_id in query.robot_id:
-            if robot_id >= len(await rcm.robots):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Robot with ID {robot_id} not found.",
-                )
-            robots.append(await rcm.get_robot(robot_id))
-    elif query.robot_id is None:
-        robots = copy(await rcm.robots)
 
     if query.robot_serials_to_ignore is not None:
         for robot in robots:

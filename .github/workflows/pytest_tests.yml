@@ -119,6 +119,9 @@ jobs:
         run: |
           cd phosphobot
           uv run pytest -s -v tests/api/ 2>&1 | tee tests.log
+        env:
+          # tests/api is skipped without this (see tests/api/conftest.py)
+          PHOSPHOBOT_API_TESTS_LIVE: "1"
         continue-on-error: true
 
       - name: Summarize test results to Markdown
