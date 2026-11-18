@@ -53,6 +53,7 @@ class YOLOVisionSystem:
         camera_rotation: str = "sim",  # "sim" or "real" (for debug logging only)
         angle_offset_deg: float = 180.0,  # OBB angle offset: 180 for sim, 0 for real
         pixel_axes: Optional[list] = None,  # 2x2 axis mapping matrix (calibration-driven)
+        model_name: Optional[str] = None,  # Name the model kind is read from (default: model_path)
     ):
         """
         Initialize YOLO vision system.
@@ -72,6 +73,9 @@ class YOLOVisionSystem:
                 Sim (crossed): [[0,-1],[-1,0]] — dy→world_x, dx→world_y
                 Real (direct): [[-1,0],[0,-1]] — dx→world_x, dy→world_y
                 If None, defaults to sim convention [[0,-1],[-1,0]].
+            model_name: Name the model kind (obb / pose / v2) is read from, for a caller
+                that loads a resolved model_path whose own name may differ.
+                If None, the kind is read from model_path.
         """
         from ultralytics import YOLO
 
@@ -84,7 +88,7 @@ class YOLOVisionSystem:
         self.device = device
 
         # Detect model type from filename or model task attribute
-        model_path_lower = str(model_path).lower()
+        model_path_lower = str(model_name or model_path).lower()
         self.is_pose_model = "pose" in model_path_lower or getattr(self.model, 'task', '') == 'pose'
         self.is_obb_model = "obb" in model_path_lower or getattr(self.model, 'task', '') == 'obb'
 

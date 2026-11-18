@@ -214,12 +214,14 @@ class RLPaperDrag(ActionModel):
 
         # ---- In-process YOLO detector (constructor takes individual calib params,
         #      NOT a path — see yolo_vision_adapter.py:43-56) ----
-        # ultralytics unpickles its weights in full, so they obey the same root.
-        # The path is passed on as given: the detector reads the model kind
-        # (obb / pose / v2) from the file name.
-        _resolve_inside_models_root(cfg.yolo_model_path)
+        # ultralytics unpickles its weights in full, so they obey the same root,
+        # and the file that is loaded is the resolved one that was checked. The
+        # detector reads the model kind (obb / pose / v2) from a name: it gets
+        # the name as given for that only.
+        yolo_path = _resolve_inside_models_root(cfg.yolo_model_path)
         self.yolo = YOLOVisionSystem(
-            model_path=cfg.yolo_model_path,
+            model_path=str(yolo_path),
+            model_name=cfg.yolo_model_path,
             conf_threshold=0.05,
             pixels_per_meter=float(yv.get("pixels_per_meter_x", 1043.0)),
             pixels_per_meter_y=(float(yv["pixels_per_meter_y"])

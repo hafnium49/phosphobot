@@ -10,6 +10,7 @@ Covers:
     - the checkpoint is loaded with weights_only=True; a pickle that carries
       a call is refused and the call does not run
     - the YOLO weights (a full pickle, loaded by ultralytics) obey the same root
+      and are loaded from the resolved path that was checked
     - fetch_and_verify_config refuses such a model_id before anything is loaded
     - the detection publisher binds to 127.0.0.1 unless
       PHOSPHOBOT_RL_PAPER_DRAG_PUB_HOST names another interface
@@ -289,13 +290,73 @@ def test_yolo_weights_outside_the_root_are_refused_and_not_loaded(rig):
     assert _StubYOLO.built == []
 
 
-def test_yolo_detector_gets_the_path_it_was_given(rig):
-    """YOLOVisionSystem reads the model kind from the file name: do not rename it."""
+def test_yolo_symlink_inside_the_root_that_leaves_it_is_refused(rig):
+    from phosphobot.am.rl_paper_drag import RLPaperDrag
+
+    (rig.outside / YOLO).write_bytes(b"stub weights")
+    (rig.root / "escape_obb.pt").symlink_to(rig.outside / YOLO)
+
+    with pytest.raises(ValueError, match="outside the models root"):
+        RLPaperDrag(rig.cfg(yolo_model_path=str(rig.root / "escape_obb.pt")))
+    assert _StubYOLO.built == []
+
+
+def test_yolo_loader_gets_the_resolved_path_not_the_symlink(rig):
+    """What was checked is what is read; the name as given only tells the kind."""
     from phosphobot.am.rl_paper_drag import RLPaperDrag
 
     RLPaperDrag(rig.cfg())
 
-    assert _StubYOLO.built[0]["model_path"] == str(rig.bundle / YOLO)
+    assert _StubYOLO.built[0]["model_path"] == str((rig.root / YOLO).resolve())
+    assert _StubYOLO.built[0]["model_name"] == str(rig.bundle / YOLO)
+
+
+class _StubUltralyticsYOLO:
+    """Stands in for ultralytics.YOLO; records the path it was asked to load."""
+
+    loaded: list = []
+    task = "detect"
+
+    def __init__(self, path):
+        _StubUltralyticsYOLO.loaded.append(path)
+
+
+@pytest.fixture
+def stub_ultralytics(monkeypatch):
+    import ultralytics
+
+    _StubUltralyticsYOLO.loaded = []
+    monkeypatch.setattr(ultralytics, "YOLO", _StubUltralyticsYOLO)
+    return _StubUltralyticsYOLO
+
+
+def test_yolo_vision_system_loads_model_path_and_reads_the_kind_from_model_name(
+    tmp_path, stub_ultralytics
+):
+    from phosphobot.am.yolo_vision_adapter import YOLOVisionSystem
+
+    real = tmp_path / "weights.pt"
+    real.write_bytes(b"stub weights")
+
+    v = YOLOVisionSystem(model_path=str(real), model_name="bundle/paper_yolo_obb_v2.pt")
+
+    assert stub_ultralytics.loaded == [str(real)]
+    assert (v.is_obb_model, v.is_v2_model, v.is_pose_model) == (True, True, False)
+
+
+def test_yolo_vision_system_without_model_name_reads_the_kind_from_model_path(
+    tmp_path, stub_ultralytics
+):
+    """As before, for every other caller."""
+    from phosphobot.am.yolo_vision_adapter import YOLOVisionSystem
+
+    real = tmp_path / "paper_yolo_pose.pt"
+    real.write_bytes(b"stub weights")
+
+    v = YOLOVisionSystem(model_path=str(real))
+
+    assert stub_ultralytics.loaded == [str(real)]
+    assert (v.is_obb_model, v.is_v2_model, v.is_pose_model) == (False, False, True)
 
 
 # -------- fetch_and_verify_config: the request is refused before any load --------
