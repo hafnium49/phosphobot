@@ -8,6 +8,7 @@ Covers:
       (PHOSPHOBOT_RL_PAPER_DRAG_MODELS_ROOT), also through symlinks and ".."
     - the checkpoint is loaded with weights_only=True; a pickle that carries
       a call is refused and the call does not run
+    - the YOLO weights (a full pickle, loaded by ultralytics) obey the same root
     - fetch_and_verify_config refuses such a model_id before anything is loaded
 """
 from __future__ import annotations
@@ -270,6 +271,27 @@ def test_pickle_that_carries_a_call_is_refused_and_the_call_does_not_run(
     assert not marker.exists()
 
 
+# -------- the YOLO weights: a full pickle, so the same root --------
+
+def test_yolo_weights_outside_the_root_are_refused_and_not_loaded(rig):
+    from phosphobot.am.rl_paper_drag import RLPaperDrag
+
+    (rig.outside / YOLO).write_bytes(b"stub weights")
+
+    with pytest.raises(ValueError, match="outside the models root"):
+        RLPaperDrag(rig.cfg(yolo_model_path=str(rig.outside / YOLO)))
+    assert _StubYOLO.built == []
+
+
+def test_yolo_detector_gets_the_path_it_was_given(rig):
+    """YOLOVisionSystem reads the model kind from the file name: do not rename it."""
+    from phosphobot.am.rl_paper_drag import RLPaperDrag
+
+    RLPaperDrag(rig.cfg())
+
+    assert _StubYOLO.built[0]["model_path"] == str(rig.bundle / YOLO)
+
+
 # -------- fetch_and_verify_config: the request is refused before any load --------
 
 def test_fetch_and_verify_config_accepts_the_bundle(rig):
@@ -294,7 +316,7 @@ def test_fetch_and_verify_config_accepts_a_relative_model_id(rig, monkeypatch, t
     RLPaperDrag(cfg.model_copy(update={"publish_detections_port": None}))
 
 
-@pytest.mark.parametrize("name", [CKPT])
+@pytest.mark.parametrize("name", [CKPT, YOLO])
 def test_fetch_and_verify_config_refuses_weights_outside_the_root(rig, name):
     from phosphobot.am.rl_paper_drag import RLPaperDrag
 

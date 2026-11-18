@@ -203,6 +203,10 @@ class RLPaperDrag(ActionModel):
 
         # ---- In-process YOLO detector (constructor takes individual calib params,
         #      NOT a path — see yolo_vision_adapter.py:43-56) ----
+        # ultralytics unpickles its weights in full, so they obey the same root.
+        # The path is passed on as given: the detector reads the model kind
+        # (obb / pose / v2) from the file name.
+        _resolve_inside_models_root(cfg.yolo_model_path)
         self.yolo = YOLOVisionSystem(
             model_path=cfg.yolo_model_path,
             conf_threshold=0.05,
@@ -441,7 +445,8 @@ class RLPaperDrag(ActionModel):
         missing = [str(p) for p in (ckpt, yolo, npz, cal) if not p.exists()]
         if missing:
             raise ValueError(f"RLPaperDrag missing required files: {missing}")
-        _resolve_inside_models_root(str(ckpt))
+        for weights in (ckpt, yolo):
+            _resolve_inside_models_root(str(weights))
         if len(robots) != 1:
             raise ValueError(f"RLPaperDrag requires exactly 1 robot; got {len(robots)}")
         # No camera validation — we call get_rgb_frame() by camera_id at runtime.
