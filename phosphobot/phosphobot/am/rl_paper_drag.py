@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any, List, Literal, Optional
@@ -89,6 +90,29 @@ class _ObsNormalizer(nn.Module):
 def _wrap_angle(angle: float) -> float:
     """Wrap angle to [-π, π]."""
     return float(np.arctan2(np.sin(angle), np.cos(angle)))
+
+
+# --- Where pickled weights may come from ---
+#
+# model_id arrives in a request (POST /ai-control/start) and a .pt file is a
+# pickle, so a weight file is read only if its real path (symlinks and ".."
+# resolved) lies inside ONE models root. The default is the directory that
+# start_phosphobot_rl.sh links the model bundle to; set
+# PHOSPHOBOT_RL_PAPER_DRAG_MODELS_ROOT to use another one.
+MODELS_ROOT_ENV = "PHOSPHOBOT_RL_PAPER_DRAG_MODELS_ROOT"
+DEFAULT_MODELS_ROOT = "/home/hafnium/so101-rl-deploy/models"
+
+
+def _resolve_inside_models_root(path: str) -> Path:
+    """Real path of a weight file; ValueError unless it is inside the models root."""
+    root = Path(os.environ.get(MODELS_ROOT_ENV) or DEFAULT_MODELS_ROOT).resolve()
+    real = Path(path).resolve()
+    if not real.is_relative_to(root):
+        raise ValueError(
+            f"RLPaperDrag refuses to load {path}: it resolves to {real}, outside "
+            f"the models root {root} (set {MODELS_ROOT_ENV} to change the root)"
+        )
+    return real
 
 
 # --- Spawn config (returned by fetch_and_verify_config) ---
@@ -160,8 +184,9 @@ class RLPaperDrag(ActionModel):
         self.actor = _ActorMLP(obs_dim, act_dim, hidden_dims=[512, 256, 128])
         self.obs_normalizer = _ObsNormalizer(obs_dim)
 
-        # ---- Load checkpoint ----
-        ckpt = torch.load(cfg.checkpoint_path, map_location=self.device, weights_only=False)
+        # ---- Load checkpoint (from the models root only, and tensors only) ----
+        ckpt_path = _resolve_inside_models_root(cfg.checkpoint_path)
+        ckpt = torch.load(ckpt_path, map_location=self.device, weights_only=True)
         actor_sd = ckpt["actor_state_dict"]
 
         norm_sd = {k.replace("obs_normalizer.", ""): v for k, v in actor_sd.items()
@@ -416,6 +441,7 @@ class RLPaperDrag(ActionModel):
         missing = [str(p) for p in (ckpt, yolo, npz, cal) if not p.exists()]
         if missing:
             raise ValueError(f"RLPaperDrag missing required files: {missing}")
+        _resolve_inside_models_root(str(ckpt))
         if len(robots) != 1:
             raise ValueError(f"RLPaperDrag requires exactly 1 robot; got {len(robots)}")
         # No camera validation — we call get_rgb_frame() by camera_id at runtime.

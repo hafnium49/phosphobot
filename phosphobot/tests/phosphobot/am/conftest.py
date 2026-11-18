@@ -35,6 +35,8 @@ if Path(SO101_RL_DEPLOY).is_dir() and SO101_RL_DEPLOY not in sys.path:
 # --- Asset directory (weights) ---
 _DEFAULT_ASSETS_DIR = "/home/hafnium/so101-rl-deploy/models"
 ASSETS_DIR = Path(os.environ.get("SO101_ASSETS_DIR", _DEFAULT_ASSETS_DIR))
+# RLPaperDrag reads weights only from its models root: the same directory here.
+os.environ.setdefault("PHOSPHOBOT_RL_PAPER_DRAG_MODELS_ROOT", str(ASSETS_DIR))
 
 
 def _required_asset_paths():

@@ -76,7 +76,7 @@ def test_actor_mlp_loads_run20_checkpoint(rl_assets_bundle):
     ckpt = torch.load(
         str(rl_assets_bundle / "best_run20_98pct.pt"),
         map_location="cpu",
-        weights_only=False,
+        weights_only=True,
     )
     actor_sd = ckpt["actor_state_dict"]
 
@@ -122,7 +122,7 @@ def test_obs_normalizer_loads_run20_stats(rl_assets_bundle):
     ckpt = torch.load(
         str(rl_assets_bundle / "best_run20_98pct.pt"),
         map_location="cpu",
-        weights_only=False,
+        weights_only=True,
     )
     norm_sd = {k.replace("obs_normalizer.", ""): v
                for k, v in ckpt["actor_state_dict"].items()
