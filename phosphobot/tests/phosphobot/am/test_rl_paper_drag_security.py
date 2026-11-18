@@ -1,7 +1,8 @@
 """Security tests for RLPaperDrag: which weight files it unpickles, and where it publishes.
 
 Nothing here needs the real assets: every checkpoint is a small fake built in
-tmp_path and the YOLO detector is a stub, so no file outside tmp_path is read.
+tmp_path, the YOLO detector is a stub and the ZMQ context is a fake, so no file
+outside tmp_path is read and no socket is opened.
 
 Covers:
     - the checkpoint is loaded only if it resolves inside the models root
@@ -10,6 +11,8 @@ Covers:
       a call is refused and the call does not run
     - the YOLO weights (a full pickle, loaded by ultralytics) obey the same root
     - fetch_and_verify_config refuses such a model_id before anything is loaded
+    - the detection publisher binds to 127.0.0.1 unless
+      PHOSPHOBOT_RL_PAPER_DRAG_PUB_HOST names another interface
 """
 from __future__ import annotations
 
@@ -22,10 +25,12 @@ import numpy as np
 import pytest
 
 ROOT_ENV = "PHOSPHOBOT_RL_PAPER_DRAG_MODELS_ROOT"
+PUB_HOST_ENV = "PHOSPHOBOT_RL_PAPER_DRAG_PUB_HOST"
 CKPT = "best_run20_98pct.pt"
 YOLO = "paper_yolo_obb.pt"
 NPZ = "so101_nmpc_references.npz"
 CAL = "calibration.json"
+PUB_PORT = 45555  # never bound: the ZMQ context is a fake
 
 
 def _actor_state_dict():
@@ -128,6 +133,7 @@ def rig(tmp_path, monkeypatch):
 
     rig = _Rig(tmp_path)
     monkeypatch.setenv(ROOT_ENV, str(rig.root))
+    monkeypatch.delenv(PUB_HOST_ENV, raising=False)
     _StubYOLO.built = []
     monkeypatch.setattr(mod, "YOLOVisionSystem", _StubYOLO)
     return rig
@@ -329,3 +335,67 @@ def test_fetch_and_verify_config_refuses_weights_outside_the_root(rig, name):
         )
     assert name in str(exc_info.value)
     assert ROOT_ENV in str(exc_info.value)
+
+
+# -------- the detection publisher: which interface --------
+
+class _FakeSocket:
+    def __init__(self):
+        self.bound: list = []
+
+    def bind(self, endpoint):
+        self.bound.append(endpoint)
+
+
+class _FakeContext:
+    def __init__(self):
+        self.sock = _FakeSocket()
+
+    def socket(self, kind):
+        return self.sock
+
+
+@pytest.fixture
+def fake_zmq(monkeypatch):
+    import zmq
+
+    ctx = _FakeContext()
+    monkeypatch.setattr(zmq, "Context", lambda: ctx)
+    return ctx.sock
+
+
+def test_publisher_binds_to_loopback_by_default(rig, fake_zmq):
+    from phosphobot.am.rl_paper_drag import RLPaperDrag
+
+    RLPaperDrag(rig.cfg(publish_detections_port=PUB_PORT))
+
+    assert fake_zmq.bound == [f"tcp://127.0.0.1:{PUB_PORT}"]
+
+
+@pytest.mark.parametrize("host", ["192.168.1.50", "*"])
+def test_publisher_binds_to_the_interface_the_variable_names(
+    rig, fake_zmq, monkeypatch, host
+):
+    from phosphobot.am.rl_paper_drag import RLPaperDrag
+
+    monkeypatch.setenv(PUB_HOST_ENV, host)
+    RLPaperDrag(rig.cfg(publish_detections_port=PUB_PORT))
+
+    assert fake_zmq.bound == [f"tcp://{host}:{PUB_PORT}"]
+
+
+def test_empty_publisher_variable_means_loopback(rig, fake_zmq, monkeypatch):
+    from phosphobot.am.rl_paper_drag import RLPaperDrag
+
+    monkeypatch.setenv(PUB_HOST_ENV, "")
+    RLPaperDrag(rig.cfg(publish_detections_port=PUB_PORT))
+
+    assert fake_zmq.bound == [f"tcp://127.0.0.1:{PUB_PORT}"]
+
+
+def test_no_port_no_publisher(rig, fake_zmq):
+    from phosphobot.am.rl_paper_drag import RLPaperDrag
+
+    RLPaperDrag(rig.cfg(publish_detections_port=None))
+
+    assert fake_zmq.bound == []

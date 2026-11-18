@@ -115,6 +115,17 @@ def _resolve_inside_models_root(path: str) -> Path:
     return real
 
 
+# --- Where the detections are published ---
+#
+# Loopback by default: the overlay (live_yolo_overlay.py --ip localhost) runs on
+# the same host as phosphobot. If it runs on another machine, set
+# PHOSPHOBOT_RL_PAPER_DRAG_PUB_HOST to the address of the interface it reaches
+# phosphobot on ("*" for every interface, as before); everyone on that network
+# can then read the detections.
+PUB_HOST_ENV = "PHOSPHOBOT_RL_PAPER_DRAG_PUB_HOST"
+DEFAULT_PUB_HOST = "127.0.0.1"
+
+
 # --- Spawn config (returned by fetch_and_verify_config) ---
 
 class RLPaperDragSpawnConfig(BaseModel):
@@ -241,9 +252,10 @@ class RLPaperDrag(ActionModel):
         if cfg.publish_detections_port is not None:
             self._zmq_ctx = zmq.Context()
             self._detection_pub = self._zmq_ctx.socket(zmq.PUB)
-            self._detection_pub.bind(f"tcp://*:{cfg.publish_detections_port}")
-            logger.info(f"[RLPaperDrag] Publishing detections on "
-                        f"tcp://*:{cfg.publish_detections_port}")
+            pub_host = os.environ.get(PUB_HOST_ENV) or DEFAULT_PUB_HOST
+            endpoint = f"tcp://{pub_host}:{cfg.publish_detections_port}"
+            self._detection_pub.bind(endpoint)
+            logger.info(f"[RLPaperDrag] Publishing detections on {endpoint}")
 
     # -------------------- Reference matching / reset --------------------
 
