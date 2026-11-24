@@ -69,6 +69,12 @@ The response has one more field, only on compensated writes:
 `correction_ticks`: motor units of the command minus motor units of the request, for the
 five arm joints, as written. `final`: as requested.
 
+**A client must check that the response has the `compensation` object.** The server
+refuses `compensate` or `final` sent in the JSON body, but it cannot catch a misspelt
+query key (`?Compensate=full`, `?compensated=full`): FastAPI ignores unknown query
+keys, and such a request is an ordinary uncompensated write answered 200 without
+`compensation`.
+
 ## Refusals
 
 A request that asks for compensation and cannot have it is refused and nothing is
@@ -76,7 +82,7 @@ written. There is no fallback to an uncompensated write.
 
 | Status | Reason |
 |--------|--------|
-| 400 | `unit` is not `rad`, `joints_ids` is given, not six angles, an angle (or its command) outside -pi..pi, or the robot is not an SO-100/SO-101. Also `final=true` without `compensate`: a caller that believes it is compensated is not served an uncompensated write |
+| 400 | the body has a key `compensate` or `final` (they are query parameters; whether or not the query has them). `unit` is not `rad`, `joints_ids` is given, not six angles, an angle (or its command) outside -pi..pi, or the robot is not an SO-100/SO-101. Also `final=true` without `compensate`: a caller that believes it is compensated is not served an uncompensated write |
 | 409 | `PHOSPHOBOT_SERVO_COMPENSATION` is unset; or the arm's serial is not in the config; or the arm's loaded calibration (the six `servos_offsets_signs` and `servos_offsets`) is not the one in the config for that serial; the detail says which |
 | 422 | `compensate` is neither `full` nor `static`, or `final` is not a boolean |
 | 500 | the config file cannot be used; or the command computed for this request is more than 60 (+1 for the truncation) motor units from the request on an arm joint, or changes the gripper at all (a fault on the server's side; the detail names the joint and the units) |

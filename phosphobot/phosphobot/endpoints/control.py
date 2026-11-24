@@ -14,6 +14,7 @@ from fastapi import (
     Depends,
     HTTPException,
     Query,
+    Request,
     WebSocket,
     WebSocketDisconnect,
 )
@@ -895,6 +896,7 @@ async def read_joints_raw(
 )
 async def write_joints(
     request: JointsWriteRequest,
+    http_request: Request,
     compensate: Optional[Literal["full", "static"]] = Query(
         None,
         description="Servo compensation (SO-100/SO-101, opt-in): write the request minus the error a measured model of the servos predicts. "
@@ -919,6 +921,18 @@ async def write_joints(
         )
 
     robot = cast(BaseManipulator, robot)
+    # `compensate` and `final` are query parameters. In the body they would be
+    # dropped with the other unknown keys and the write served uncompensated
+    try:
+        body = await http_request.json()
+    except Exception:
+        body = None
+    misplaced = sorted({"compensate", "final"} & set(body)) if isinstance(body, dict) else []
+    if misplaced:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{' and '.join(misplaced)} in the body: these are query parameters (/joints/write?compensate=full&final=true). Nothing was written.",
+        )
     if final and compensate is None:
         # A caller that believes it is compensated is not served an uncompensated write
         raise HTTPException(
