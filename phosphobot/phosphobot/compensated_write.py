@@ -10,7 +10,8 @@ copy from another repository. This module is what the server adds around it:
 - the config file named by the environment variable PHOSPHOBOT_SERVO_COMPENSATION,
   loaded once, at the first request that asks for compensation;
 - per arm, held by the arm object (ArmCompensation): one stream per set of terms and
-  the last compensated request;
+  the last compensated request. Anything else that writes the arm's goal voids them
+  (SO100Hardware._goal_written is where every such write passes);
 - the refusals. Every reason a request cannot be compensated is an HTTPException and
   nothing is written: there is no fallback to an uncompensated write.
 
@@ -19,6 +20,7 @@ See phosphobot/docs/servo_compensation.md.
 
 import json
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -155,6 +157,11 @@ class ArmCompensation:
     - terms, requested_position: the terms of the last compensated request, and that
       request in motor units, converted the way the arm converts radians. Both None
       when the arm's last goal write was not a compensated one.
+
+    The endpoints write from the event loop, and some movers of the server from a
+    thread of their own (the leader-follower loop, a gripper command in a background
+    task). The lock makes a write of theirs wait for a compensated write in
+    progress and void it afterwards.
     """
 
     def __init__(self, robot: SO100Hardware) -> None:
@@ -162,13 +169,35 @@ class ArmCompensation:
         self.streams: Dict[str, sc.Stream] = {}
         self.terms: Optional[str] = None
         self.requested_position: Optional[List[int]] = None
+        self._lock = threading.RLock()
+        # True while this object writes the arm's goal itself
+        self._own_write = False
+
+    def goal_written(self) -> None:
+        """
+        SO100Hardware._goal_written: something writes this arm's goal or switches
+        its torque, or the arm is disconnected. Unless it is this object's own
+        write, the streams are void.
+        """
+        with self._lock:
+            if not self._own_write:
+                self.void()
 
     def void(self) -> None:
         """What the streams knew is void: the arm's goal is not theirs any more."""
-        for stream in self.streams.values():
-            stream.reset()
-        self.terms = None
-        self.requested_position = None
+        with self._lock:
+            for stream in self.streams.values():
+                stream.reset()
+            self.terms = None
+            self.requested_position = None
+
+    def _write_own(self, command: List[float]) -> Optional[bool]:
+        """Write a command of a stream through the arm's usual path of a write in radians."""
+        self._own_write = True
+        try:
+            return self.robot.write_joint_positions(angles=command, unit="rad")
+        finally:
+            self._own_write = False
 
     def write(
         self, compensator: sc.Compensator, angles: List[float], terms: Terms
@@ -180,29 +209,30 @@ class ArmCompensation:
         was added to each of the five arm joints, in motor units as written.
         """
         robot = self.robot
-        for name, other in self.streams.items():
-            if name != terms:
-                # For a stream, a write with other terms is a write by somebody else
-                other.reset()
-        stream = self.streams.get(terms)
-        if stream is None:
-            stream = self.streams[terms] = sc.Stream(compensator, TERMS[terms])
+        with self._lock:
+            for name, other in self.streams.items():
+                if name != terms:
+                    # For a stream, a write with other terms is a write by somebody else
+                    other.reset()
+            stream = self.streams.get(terms)
+            if stream is None:
+                stream = self.streams[terms] = sc.Stream(compensator, TERMS[terms])
 
-        command = stream.step(angles, now())
-        try:
-            done = robot.write_joint_positions(angles=command, unit="rad")
-        except Exception:
-            self.void()
-            raise
-        if done is not True:
-            self.void()
-            return done, []
+            command = stream.step(angles, now())
+            try:
+                done = self._write_own(command)
+            except Exception:
+                self.void()
+                raise
+            if done is not True:
+                self.void()
+                return done, []
 
-        requested = robot._radians_vec_to_motor_units(np.array(angles, dtype=float))
-        written = robot._radians_vec_to_motor_units(np.array(command, dtype=float))
-        self.terms = terms
-        self.requested_position = [int(units) for units in requested]
-        return done, [int(units) for units in (written - requested)[:5]]
+            requested = robot._radians_vec_to_motor_units(np.array(angles, dtype=float))
+            written = robot._radians_vec_to_motor_units(np.array(command, dtype=float))
+            self.terms = terms
+            self.requested_position = [int(units) for units in requested]
+            return done, [int(units) for units in (written - requested)[:5]]
 
 
 def write(

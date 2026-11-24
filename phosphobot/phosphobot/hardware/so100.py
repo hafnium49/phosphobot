@@ -79,6 +79,22 @@ class SO100Hardware(BaseManipulator):
     # and its last compensated request. None until the first compensated write.
     servo_compensation: Optional["ArmCompensation"] = None
 
+    def _goal_written(self) -> None:
+        """
+        The one place that every writer of this arm's goal passes.
+
+        Called by the methods that write Goal_Position (write_motor_position,
+        write_group_motor_position), by those that write Torque_Enable
+        (enable_torque, disable_torque, calibrate_motors) and by disconnect,
+        before they touch the bus and also when the write is then skipped or fails.
+        Every mover of the server ends in one of them.
+
+        The arm's servo compensation is told: a goal that is not its own any more
+        voids its streams. It ignores the call during its own write.
+        """
+        if self.servo_compensation is not None:
+            self.servo_compensation.goal_written()
+
     @property
     def servo_id_to_motor_name(self) -> Dict[int, str]:
         output: Dict[int, str] = {cast(int, v[0]): k for k, v in self.motors.items()}
@@ -138,6 +154,7 @@ class SO100Hardware(BaseManipulator):
         """
         Disconnect the robot.
         """
+        self._goal_written()
         try:
             self.motors_bus.disconnect()
         except Exception as e:
@@ -234,6 +251,7 @@ class SO100Hardware(BaseManipulator):
         Returns True only when Torque_Enable reads back as 1 on all six servos and
         no write failed. False when the arm is off the bus (nothing was written).
         """
+        self._goal_written()
         if not self.is_connected:
             return False
         if self.config is None:
@@ -264,6 +282,7 @@ class SO100Hardware(BaseManipulator):
         Returns True only when Torque_Enable reads back as 0 on all six servos.
         False when the arm is off the bus (nothing was written).
         """
+        self._goal_written()
         if not self.is_connected:
             return False
         self._torque_enabled_cache = None
@@ -400,6 +419,7 @@ class SO100Hardware(BaseManipulator):
         Returns True when the bus write was issued without error, False when it
         was skipped (arm off the bus) or raised.
         """
+        self._goal_written()
         if not self.is_connected:
             return False
 
@@ -425,6 +445,7 @@ class SO100Hardware(BaseManipulator):
         Returns True when the bus write was issued without error, False when it
         was skipped (arm off the bus) or raised.
         """
+        self._goal_written()
         if not self.is_connected:
             return False
 
@@ -733,6 +754,7 @@ class SO100Hardware(BaseManipulator):
         This is called during the calibration phase of the robot.
         It sets the offset of all motors to self.RESOLUTION/2.
         """
+        self._goal_written()
         if not self.is_connected:
             logger.warning("Robot is not connected.")
             return None
