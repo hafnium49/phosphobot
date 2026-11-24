@@ -1,7 +1,7 @@
 import asyncio
 import time
 import traceback
-from typing import Any, Dict, List, Literal, Optional, Tuple, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, cast
 
 import numpy as np
 import serial
@@ -15,6 +15,9 @@ from phosphobot.hardware.base import BaseManipulator
 from phosphobot.hardware.motors.feetech import FeetechMotorsBus  # type: ignore
 from phosphobot.models import RobotConfigStatus
 from phosphobot.utils import get_resources_path
+
+if TYPE_CHECKING:
+    from phosphobot.compensated_write import ArmCompensation
 
 
 class SO100Hardware(BaseManipulator):
@@ -72,6 +75,9 @@ class SO100Hardware(BaseManipulator):
     _torque_enabled_cache: Optional[Tuple[List[bool], float]] = None
     # time.monotonic() of the last successful bus read of all positions
     last_position_read_monotonic: Optional[float] = None
+    # Servo compensation of this arm (phosphobot/compensated_write.py): its streams
+    # and its last compensated request. None until the first compensated write.
+    servo_compensation: Optional["ArmCompensation"] = None
 
     @property
     def servo_id_to_motor_name(self) -> Dict[int, str]:
