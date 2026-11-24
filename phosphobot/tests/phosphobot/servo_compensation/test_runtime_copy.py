@@ -14,7 +14,7 @@ import phosphobot
 from phosphobot.hardware import SO100Hardware
 
 RUNTIME = Path(phosphobot.__file__).parent / "hardware" / "servo_compensation.py"
-SOURCE_SHA256 = "dbd4001182cee1b25eb371d71bf20f112e68eb69196b2cf3be3c98f34ea02f5a"
+SOURCE_SHA256 = "d1b4b32e194117611ba8e8a42d19fe4292f183d7cd75291aee6c94f9ef483d86"
 CONFIG = Path(__file__).parent / "so101_compensation_v1.json"
 CONFIG_SHA256 = "5dc6de5463deafc9564682f294c08b5405eb1dd3771484327a51073d2f0a0b57"
 END_OF_HEADER = b"# ----- END OF HEADER -----\n"
@@ -28,7 +28,7 @@ def test_the_body_of_the_copy_is_the_source_file():
     # The header is comments only, and names what the body is a copy of
     assert all(line.startswith(b"#") for line in header.splitlines())
     assert SOURCE_SHA256.encode() in header
-    assert b"1640db5c14614f815d407c5fa6f8b6d22eba9535" in header
+    assert b"f52539c8371b178e78afa24b4f43a95820ff5c81" in header
 
 
 def test_the_fixture_config_is_the_real_one():

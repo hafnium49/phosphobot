@@ -12,7 +12,9 @@ its command: a constant, the sag under gravity, a lag times the commanded speed,
 friction band on the side the joint comes from. A compensated write sends the request
 minus that predicted error, so that the servo ends on the request. It is feed-forward:
 it reads the requests only, never the arm. The gripper is not modelled and is written
-as requested. Each joint's correction is bounded (`max_ticks` of the config, 60).
+as requested. Each joint's correction is bounded to 60 ticks: the runtime clips it, a
+config file may tighten the bound (`max_ticks`) and never widen it, and the server itself
+compares every command with its request in motor units before it writes (below).
 
 The model's equation and the stream logic are `phosphobot/hardware/servo_compensation.py`,
 a verbatim copy of a file of another repository (source, commit and sha256 in its header;
@@ -28,8 +30,10 @@ the gravity chain, `max_ticks`).
   says what was loaded (`Servo compensation config loaded from ...`).
 - Variable unset: requests that ask for compensation are refused with 409
   (`servo compensation is not configured on this server (PHOSPHOBOT_SERVO_COMPENSATION is unset)`).
-- File unreadable, not JSON or of another schema: they are refused with 500, and an
-  error is logged. The file is not read again: correct it and restart the server.
+- File unreadable, not JSON, of another schema, with a `max_ticks` that is not a number
+  in (0, 60], or with an arm whose `validation_passed` is not true: they are refused
+  with 500, and an error is logged. The file is not read again: correct it and restart
+  the server.
 - In both cases the server runs as usual and every other request is unchanged.
 
 ## The request
@@ -75,9 +79,13 @@ written. There is no fallback to an uncompensated write.
 | 400 | `unit` is not `rad`, `joints_ids` is given, not six angles, an angle (or its command) outside -pi..pi, or the robot is not an SO-100/SO-101. Also `final=true` without `compensate`: a caller that believes it is compensated is not served an uncompensated write |
 | 409 | `PHOSPHOBOT_SERVO_COMPENSATION` is unset; or the arm's serial is not in the config; or the arm's loaded calibration (the six `servos_offsets_signs` and `servos_offsets`) is not the one in the config for that serial; the detail says which |
 | 422 | `compensate` is neither `full` nor `static`, or `final` is not a boolean |
-| 500 | the config file cannot be used |
+| 500 | the config file cannot be used; or the command computed for this request is more than 60 (+1 for the truncation) motor units from the request on an arm joint, or changes the gripper at all (a fault on the server's side; the detail names the joint and the units) |
 | 503 | the arm is off the bus (also with `--only-simulation`: the simulation is never compensated) |
 | 502 | the bus write failed; the arm's streams are void |
+
+A request that is refused before the bus was touched (every row but the last) changes
+nothing: the arm's stream is as after the last accepted request, the rest command of
+that request still comes, and the raw read still reports that request.
 
 ## The rest command
 

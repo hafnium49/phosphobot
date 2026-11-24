@@ -308,6 +308,7 @@ class ArmCompensation:
                 command = stream.rest(now())
                 if command is None:
                     return
+                self._units_or_refusal([float(v) for v in stream._q], command)
                 if self._write_own(command) is not True:
                     raise ConnectionError("bus write failed")
             except Exception as e:
@@ -324,11 +325,21 @@ class ArmCompensation:
         finally:
             self._own_write = False
 
-    def _refuse(self, angles: List[float], command: List[float]) -> None:
+    def _units_or_refusal(
+        self, angles: List[float], command: List[float]
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Raise the refusal of a request whose command must not be written. Called
-        before anything is changed and before the bus is touched.
+        The request and its command in motor units, as the arm converts radians for
+        a write; or the refusal of a command that must not be written. Called before
+        anything is changed and before the bus is touched.
+
+        Refused: a request or a command out of -pi..pi (400), and, whatever the
+        compensator returned, a command that is further than sc.MAX_TICKS (+1 for
+        the truncation of both) from the request on an arm joint, or that changes
+        the gripper at all (500). The bound is the server's: it does not come from
+        the config file.
         """
+        robot = self.robot
         if _out_of_range(angles):
             raise HTTPException(
                 status_code=400,
@@ -339,6 +350,22 @@ class ArmCompensation:
                 status_code=400,
                 detail=f"The request is within -pi..pi but its compensated command is not, stopping to prevent damage: request {angles}, command {command}",
             )
+        requested = robot._radians_vec_to_motor_units(np.array(angles, dtype=float))
+        written = robot._radians_vec_to_motor_units(np.array(command, dtype=float))
+        serial = getattr(robot, "SERIAL_ID", None)
+        for name, units in zip(robot.motors, (written - requested).tolist()):
+            if name == "gripper":
+                if units != 0:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"arm {serial}: the compensated command changes the gripper by {units} motor units; the gripper is written as requested. Nothing was written.",
+                    )
+            elif abs(units) > sc.MAX_TICKS + 1:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"arm {serial}: the compensated command of {name} is {units} motor units from the request; the bound is {sc.MAX_TICKS:g} (+1 for the truncation). Nothing was written.",
+                )
+        return requested, written
 
     def write(
         self,
@@ -357,7 +384,7 @@ class ArmCompensation:
         was added to each of the five arm joints, in motor units as written.
 
         The state changes only after the bus write succeeded. A request that is
-        refused before the bus is touched (_refuse) leaves everything as it was:
+        refused before the bus is touched (_units_or_refusal) leaves everything as it was:
         the stream as after the last accepted request, the other stream, the rest
         timer of that request, what the raw read reports. A bus write that failed,
         or of which nothing is known, voids the streams.
@@ -365,7 +392,6 @@ class ArmCompensation:
         Called on the event loop (the endpoints are coroutines): the rest timer
         is made on the running loop.
         """
-        robot = self.robot
         with self._lock:
             stream = self.streams.get(terms)
             if stream is None:
@@ -374,7 +400,7 @@ class ArmCompensation:
             saved = _snapshot(stream)
             try:
                 command = stream.step(angles, now(), final=final)
-                self._refuse(angles, command)
+                requested, written = self._units_or_refusal(angles, command)
             except Exception:
                 _restore(stream, saved)
                 raise
@@ -395,8 +421,6 @@ class ArmCompensation:
                     # For a stream, a write with other terms is a write by somebody else
                     other.reset()
             self.streams[terms] = stream
-            requested = robot._radians_vec_to_motor_units(np.array(angles, dtype=float))
-            written = robot._radians_vec_to_motor_units(np.array(command, dtype=float))
             self.terms = terms
             self.requested_position = [int(units) for units in requested]
             if stream.pending:

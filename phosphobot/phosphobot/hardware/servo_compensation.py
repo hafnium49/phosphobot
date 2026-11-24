@@ -5,8 +5,8 @@
 # sha256 of everything after that line to the sha256 of the source file.
 #
 #   source   tools/servo_compensation.py of https://github.com/hafnium49/so101-nmpc-control
-#   commit   1640db5c14614f815d407c5fa6f8b6d22eba9535
-#   sha256   dbd4001182cee1b25eb371d71bf20f112e68eb69196b2cf3be3c98f34ea02f5a
+#   commit   f52539c8371b178e78afa24b4f43a95820ff5c81
+#   sha256   d1b4b32e194117611ba8e8a42d19fe4292f183d7cd75291aee6c94f9ef483d86
 #
 # To update: replace everything below the line with the new source file, and change the commit
 # and sha256 here and the pin of the test.
@@ -71,6 +71,9 @@ class Compensator:
         """params: per joint name {"kp" N m/rad, "lag_s", "psi0" ticks, "psic" ticks/(N m), "bias_ticks"}."""
         self.params = {n: {k: float(v) for k, v in params[n].items()} for n in JOINTS}
         self.signs, self.offsets = [float(v) for v in signs], [float(v) for v in offsets]
+        # the bound is this module's: a caller or a file may tighten it, never widen it (and it is a plain number)
+        if isinstance(max_ticks, bool) or not isinstance(max_ticks, (int, float)) or not 0 < max_ticks <= MAX_TICKS:
+            raise ValueError(f"max_ticks must be a number in (0, {MAX_TICKS}], got {max_ticks!r}")
         self.gravity, self.max_ticks = gravity, float(max_ticks)
         col = lambda k: np.array([self.params[n][k] for n in JOINTS])
         self._kp, self._lag, self._psi0, self._psic, self._bias = col("kp"), col("lag_s"), col("psi0"), col("psic"), col("bias_ticks")
@@ -106,6 +109,8 @@ class Compensator:
         if serial not in cfg.get("arms", {}):
             raise ValueError(f"{path}: no arm {serial}; it has {', '.join(sorted(cfg.get('arms', {})))}")
         a = cfg["arms"][serial]
+        if a.get("validation_passed") is not True:
+            raise ValueError(f"{path}: the model's validation did not pass for arm {serial}; it is not used")
         return cls(a["params"], a["signs"], a["offsets"], GravityChain(cfg["chain"]), cfg.get("max_ticks", MAX_TICKS))
 
     def error_ticks(self, q_rad: Sequence[float], v_ticks_s, direction, terms: Sequence[str] = TERMS) -> np.ndarray:
