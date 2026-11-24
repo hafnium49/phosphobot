@@ -56,7 +56,9 @@ def test_a_stream_that_stops_gets_its_rest_command_once(
     timer.fire()
     rest = mirror.rest(clock.t)
     assert goal_writes(arm) == 3 and goal(arm) == units(arm, rest)
-    # The request at speed 0: not the moving command, and the gripper as requested
+    # The request with the constant and the sag only: no speed, and no friction side
+    # (the joint ran on while the stop went unnoticed, and comes back)
+    assert rest == compensator().command(last, np.zeros(5), np.zeros(5), sc.TERMS)
     assert goal(arm) != units(arm, moving) and goal(arm)[5] == units(arm, last)[5]
     state = arm.servo_compensation
     assert state.terms == "full" and state.requested_position == units(arm, last)
@@ -220,6 +222,9 @@ def test_on_the_event_loop_the_rest_command_comes_by_itself(
     assert goal_writes(arm) == 2
     time.sleep(0.25)  # REST_DELAY_S is 0.1 s here
     assert goal_writes(arm) == 3 and goal(arm) == units(arm, mirror.rest(clock.t))
+    assert goal(arm) == units(
+        arm, compensator().command(mirror._q.tolist(), np.zeros(5), np.zeros(5))
+    )
     assert client.post("/joints/read/raw", params=RIGHT).status_code == 200
 
     # A timer that is cancelled from another thread than the loop's does not fire

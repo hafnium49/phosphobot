@@ -5,8 +5,8 @@
 # sha256 of everything after that line to the sha256 of the source file.
 #
 #   source   tools/servo_compensation.py of https://github.com/hafnium49/so101-nmpc-control
-#   commit   83423ae7f96dc1ff7157a7b4a03afa2fc71c40df
-#   sha256   f2b6c4bd295062fc53e006792da7a1f4c7d89ca47c193ad684968fd2cb887df7
+#   commit   1640db5c14614f815d407c5fa6f8b6d22eba9535
+#   sha256   dbd4001182cee1b25eb371d71bf20f112e68eb69196b2cf3be3c98f34ea02f5a
 #
 # To update: replace everything below the line with the new source file, and change the commit
 # and sha256 here and the pin of the test.
@@ -263,7 +263,12 @@ class Stream:
     and does not count); at rest the friction term keeps the direction the joint last came from.
 
     A stream that stops must call rest(): the last command of a move carries lag x speed, and a servo left with it
-    rests that far past the request (2026-11-24, block 2: 27 ticks on the base and the wrist roll)."""
+    rests that far past the request (2026-11-24, block 2: 27 ticks on the base and the wrist roll).
+
+    Better, the caller names its last request (step(..., final=True)): that command carries no lag term, the servo is
+    not led past the target, and the joint arrives from the side it moved on. A stop that is only found afterwards
+    (rest()) has let the joint run on for the time it took to notice (about 20 ticks at 0.3 rad/s and 0.1 s; blocks 5
+    and 9) and it comes back from the other side: rest() therefore carries the constant and the sag only."""
 
     def __init__(self, comp: Compensator, terms: Sequence[str] = TERMS):
         self.comp, self.terms = comp, tuple(terms)
@@ -276,7 +281,7 @@ class Stream:
         self._intervals: list[float] = []
         self.pending = False             # True while the last command carries a speed term that rest() must take back
 
-    def step(self, q_rad: Sequence[float], t: float) -> list[float]:
+    def step(self, q_rad: Sequence[float], t: float, final: bool = False) -> list[float]:
         q = np.asarray(q_rad, float)
         v = np.zeros(5)
         if self._q is not None:
@@ -288,15 +293,20 @@ class Stream:
         moving = np.abs(v) >= REST_TICKS_S
         self._dir = np.where(moving, np.tanh(v / V0), self._dir)
         self._q, self._t = q, float(t)
+        if final:                                               # the move ends on this request: no lead past it
+            v = np.zeros(5)
+            moving = np.zeros(5, bool)
         self.pending = bool(moving.any()) and "lag" in self.terms
         return self.comp.command(q_rad, v, self._dir, self.terms)
 
     def rest(self, t: float) -> list[float] | None:
-        """The command for a stream that has stopped: the last request at speed 0, the friction side kept. None when
-        the last command carried no speed term (nothing to take back)."""
+        """The command for a stream found stopped: the last request at speed 0 and without a friction side (the joint
+        ran on and comes back; the stream forgets the side). None when the last command carried no speed term
+        (nothing to take back)."""
         if not self.pending or self._q is None:
             return None
         self.pending = False
+        self._dir = np.zeros(5)
         return self.comp.command(list(self._q), np.zeros(5), self._dir, self.terms)
 
 
@@ -315,6 +325,12 @@ class CompensatingDriver:
     def command(self, q_rad: Sequence[float]) -> None:
         t = self._now()
         self.inner.command(self.stream.step(q_rad, t))
+        self._t_command = t
+
+    def command_final(self, q_rad: Sequence[float]) -> None:
+        """The last request of a move (the bench's line and replay name it)."""
+        t = self._now()
+        self.inner.command(self.stream.step(q_rad, t, final=True))
         self._t_command = t
 
     def read(self, *a, **k):
