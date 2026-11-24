@@ -26,7 +26,8 @@ the gravity chain, `max_ticks`).
 
 - The file is read once, at the first request that asks for compensation, and a log line
   says what was loaded (`Servo compensation config loaded from ...`).
-- Variable unset: requests that ask for compensation are refused with 501.
+- Variable unset: requests that ask for compensation are refused with 409
+  (`servo compensation is not configured on this server (PHOSPHOBOT_SERVO_COMPENSATION is unset)`).
 - File unreadable, not JSON or of another schema: they are refused with 500, and an
   error is logged. The file is not read again: correct it and restart the server.
 - In both cases the server runs as usual and every other request is unchanged.
@@ -62,9 +63,8 @@ written. There is no fallback to an uncompensated write.
 | Status | Reason |
 |--------|--------|
 | 400 | `unit` is not `rad`, `joints_ids` is given, not six angles, an angle (or its command) outside -pi..pi, or the robot is not an SO-100/SO-101 |
-| 409 | the arm's serial is not in the config; or the arm's loaded calibration (the six `servos_offsets_signs` and `servos_offsets`) is not the one in the config for that serial; the detail says which |
+| 409 | `PHOSPHOBOT_SERVO_COMPENSATION` is unset; or the arm's serial is not in the config; or the arm's loaded calibration (the six `servos_offsets_signs` and `servos_offsets`) is not the one in the config for that serial; the detail says which |
 | 422 | `compensate` is neither `full` nor `static` |
-| 501 | `PHOSPHOBOT_SERVO_COMPENSATION` is not set |
 | 500 | the config file cannot be used |
 | 503 | the arm is off the bus (also with `--only-simulation`: the simulation is never compensated) |
 | 502 | the bus write failed; the arm's streams are void |

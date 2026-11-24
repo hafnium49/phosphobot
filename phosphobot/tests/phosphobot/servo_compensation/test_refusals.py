@@ -29,8 +29,13 @@ def refused(client, arm, code, *words, **kwargs):
 
 
 def test_without_the_variable_compensation_is_unavailable(client, arms):
-    refused(client, arms[1], 501, "PHOSPHOBOT_SERVO_COMPENSATION is not set")
-    refused(client, arms[1], 501, terms="static")
+    refused(client, arms[1], 409, terms="static")
+    r = write(client, Q)
+    assert r.status_code == 409 and arms[1].motors_bus.calls == []
+    assert r.json()["detail"] == (
+        "servo compensation is not configured on this server "
+        "(PHOSPHOBOT_SERVO_COMPENSATION is unset)"
+    )
 
 
 def test_a_file_that_cannot_be_read_or_has_another_schema(

@@ -116,11 +116,11 @@ def _load() -> _Config:
     """
     path = os.environ.get(ENV_VAR)
     if not path:
-        logger.info(f"Servo compensation was asked for, but {ENV_VAR} is not set")
+        logger.info(f"Servo compensation was asked for, but {ENV_VAR} is unset")
         return _Config(
             path=None,
-            status_code=501,
-            error=f"servo compensation is not available on this server: {ENV_VAR} is not set",
+            status_code=409,
+            error=f"servo compensation is not configured on this server ({ENV_VAR} is unset)",
         )
     try:
         cfg = json.loads(Path(path).read_text())
@@ -175,9 +175,9 @@ def _calibration_difference(
 
 def compensator_for(robot: Any, serial: Optional[str]) -> sc.Compensator:
     """
-    The compensator of this arm, or the refusal: no usable config (501, 500), a
-    robot that is not an SO-100/SO-101 (400), an arm that is not in the config or
-    whose calibration is not the config's (409).
+    The compensator of this arm, or the refusal: the variable unset (409), a config
+    file that cannot be used (500), a robot that is not an SO-100/SO-101 (400), an
+    arm that is not in the config or whose calibration is not the config's (409).
     """
     global _config
     if _config is None:
