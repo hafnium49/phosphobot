@@ -2,7 +2,7 @@ import asyncio
 import json
 import time
 import traceback
-from typing import Optional, cast
+from typing import Literal, Optional, cast
 
 import httpx
 import json_numpy  # type: ignore
@@ -13,6 +13,8 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     HTTPException,
+    Query,
+    Request,
     WebSocket,
     WebSocketDisconnect,
 )
@@ -20,6 +22,7 @@ from loguru import logger
 from scipy.spatial.transform import Rotation as R
 from supabase_auth.types import Session as SupabaseSession
 
+from phosphobot import compensated_write
 from phosphobot.ai_control import CustomAIControlSignal, setup_ai_control
 from phosphobot.camera import AllCameras, get_all_cameras
 from phosphobot.configs import config
@@ -870,6 +873,8 @@ async def read_joints_raw(
         raise HTTPException(
             status_code=502, detail=f"bus read failed for arm {arm.serial}: {e}"
         )
+    # What a compensated write asked for, next to the command the register holds
+    compensated = getattr(robot, "servo_compensation", None)
 
     return JointsReadRawResponse(
         robot_id=arm.robot_id,
@@ -877,6 +882,8 @@ async def read_joints_raw(
         servo_ids=list(getattr(robot, "SERVO_IDS")),
         read_unix_s=read_unix_s,
         read_age_ms=(time.monotonic() - read_started) * 1000,
+        requested_position=compensated.requested_position if compensated else None,
+        compensation=compensated.terms if compensated else None,
         **raw,
     )
 
@@ -889,6 +896,18 @@ async def read_joints_raw(
 )
 async def write_joints(
     request: JointsWriteRequest,
+    http_request: Request,
+    compensate: Optional[Literal["full", "static"]] = Query(
+        None,
+        description="Servo compensation (SO-100/SO-101, opt-in): write the request minus the error a measured model of the servos predicts. "
+        + "'static': the constant and the gravity sag. 'full': also the lag and the friction, from the stream of requests. "
+        + "Needs six angles in rad and a server started with PHOSPHOBOT_SERVO_COMPENSATION; refused otherwise, never written uncompensated.",
+    ),
+    final: bool = Query(
+        False,
+        description="With compensate: this request is the last one of its move. Its command carries no speed term (the servo is not led past the request) and no rest command follows. "
+        + "Refused without compensate.",
+    ),
     arm: Arm = Depends(arm_required),
 ) -> StatusResponse:
     """
@@ -902,6 +921,24 @@ async def write_joints(
         )
 
     robot = cast(BaseManipulator, robot)
+    # `compensate` and `final` are query parameters. In the body they would be
+    # dropped with the other unknown keys and the write served uncompensated
+    try:
+        body = await http_request.json()
+    except Exception:
+        body = None
+    misplaced = sorted({"compensate", "final"} & set(body)) if isinstance(body, dict) else []
+    if misplaced:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{' and '.join(misplaced)} in the body: these are query parameters (/joints/write?compensate=full&final=true). Nothing was written.",
+        )
+    if final and compensate is None:
+        # A caller that believes it is compensated is not served an uncompensated write
+        raise HTTPException(
+            status_code=400,
+            detail="final is for compensated writes: send it with compensate=full or compensate=static.",
+        )
     # Refused before any servo is written. (joints_ids is refused by the robot.)
     nb_joints = len(getattr(robot, "SERVO_IDS", request.angles))
     if request.joints_ids is None and len(request.angles) != nb_joints:
@@ -909,15 +946,29 @@ async def write_joints(
             status_code=400,
             detail=f"Got {len(request.angles)} angles for the {nb_joints} joints of the robot. Send the angles of all joints.",
         )
-    done = robot.write_joint_positions(
-        angles=request.angles, unit=request.unit, joints_ids=request.joints_ids
-    )
+    # Only a compensated write has the field `compensation` in its response
+    compensation: dict = {}
+    if compensate is None:
+        done = robot.write_joint_positions(
+            angles=request.angles, unit=request.unit, joints_ids=request.joints_ids
+        )
+    else:
+        if request.unit != "rad" or request.joints_ids is not None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"compensate needs the angles of all joints in unit 'rad' and no joints_ids (got unit '{request.unit}').",
+            )
+        done, added = compensated_write.write(
+            robot, arm.serial, request.angles, compensate, final=final
+        )
+        compensation = {"compensation": added}
     bus_write = _bus_write_or_refuse(done, arm, failure="bus write failed")
 
     return StatusResponse(
         robot_id=arm.robot_id,  # type: ignore[call-arg]
         serial=arm.serial,  # type: ignore[call-arg]
         bus_write=bus_write,  # type: ignore[call-arg]
+        **compensation,
     )
 
 
