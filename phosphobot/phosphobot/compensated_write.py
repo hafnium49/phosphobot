@@ -334,9 +334,8 @@ class ArmCompensation:
                 command = stream.rest(now())
                 if command is None:
                     return
-                _, written = self._units_or_refusal(
-                    [float(v) for v in stream._q], command
-                )
+                request = np.asarray(stream._q, dtype=float).tolist()
+                _, written = self._units_or_refusal(request, command)
                 if self._write_own(command) is not True:
                     raise ConnectionError("bus write failed")
                 self._written_units = [int(units) for units in written]
