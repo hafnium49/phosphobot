@@ -407,6 +407,14 @@ class JointsReadRawResponse(BaseModel):
     torque_enabled: List[bool] = Field(
         ..., description="Torque_Enable of each servo."
     )
+    requested_position: Optional[List[int]] = Field(
+        default=None,
+        description="The last request of a compensated write (/joints/write?compensate=...), in motor units as an uncompensated write converts it; goal_position then holds the compensated command. None when the last write of the robot's goal was not a compensated one.",
+    )
+    compensation: Optional[Literal["full", "static"]] = Field(
+        default=None,
+        description="The terms of that compensated write. None when the last write of the robot's goal was not a compensated one.",
+    )
     read_unix_s: float = Field(..., description="Unix time at the start of the read.")
     read_age_ms: float = Field(
         ...,

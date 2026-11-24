@@ -872,6 +872,8 @@ async def read_joints_raw(
         raise HTTPException(
             status_code=502, detail=f"bus read failed for arm {arm.serial}: {e}"
         )
+    # What a compensated write asked for, next to the command the register holds
+    compensated = getattr(robot, "servo_compensation", None)
 
     return JointsReadRawResponse(
         robot_id=arm.robot_id,
@@ -879,6 +881,8 @@ async def read_joints_raw(
         servo_ids=list(getattr(robot, "SERVO_IDS")),
         read_unix_s=read_unix_s,
         read_age_ms=(time.monotonic() - read_started) * 1000,
+        requested_position=compensated.requested_position if compensated else None,
+        compensation=compensated.terms if compensated else None,
         **raw,
     )
 
