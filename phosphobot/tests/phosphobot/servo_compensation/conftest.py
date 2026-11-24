@@ -103,9 +103,19 @@ def timers(monkeypatch: pytest.MonkeyPatch) -> list:
 
 
 @pytest.fixture
-def real_timers(timers: list, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The timers are the server's own, on the event loop of the test client."""
-    monkeypatch.setattr(compensated_write, "RestTimer", REAL_REST_TIMER)
+def real_timers(timers: list, monkeypatch: pytest.MonkeyPatch) -> list:
+    """
+    The timers are the server's own, on the event loop of the test client. Returns
+    the RestTimer objects it made, in order.
+    """
+    made: list = []
+
+    def make(delay_s: float, callback: Callable) -> Any:
+        made.append(REAL_REST_TIMER(delay_s, callback))
+        return made[-1]
+
+    monkeypatch.setattr(compensated_write, "RestTimer", make)
+    return made
 
 
 @pytest.fixture
