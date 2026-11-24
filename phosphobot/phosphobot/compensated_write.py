@@ -275,8 +275,11 @@ class ArmCompensation:
             try:
                 if not self.robot.is_connected:
                     raise ConnectionError("the arm is not on the bus")
-                # Read from the bus now: torque can go off without the server
+                # Read from the bus now: torque can go off without the server.
+                # A read that failed is tried once more
                 torque_enabled, _ = self.robot.read_torque_enabled(max_age_s=0)
+                if torque_enabled is None:
+                    torque_enabled, _ = self.robot.read_torque_enabled(max_age_s=0)
                 if torque_enabled is None or not all(torque_enabled):
                     raise ConnectionError(f"Torque_Enable is {torque_enabled}")
                 command = stream.rest(now())

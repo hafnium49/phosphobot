@@ -191,6 +191,25 @@ def test_a_rest_command_that_cannot_be_written_is_logged_and_voids_the_stream(
     assert state.terms is None and state.requested_position is None
 
 
+def test_one_failed_torque_read_does_not_cost_the_rest_command(
+    client, arms, config_file, clock, timers
+):
+    arm = arms[1]
+    start_stream(client, clock)
+    bus, real_read, failed = arm.motors_bus, arm.motors_bus.read, []
+
+    def read_failing_once(data_name, motor_names=None):
+        if data_name == "Torque_Enable" and not failed:
+            failed.append(data_name)
+            raise ConnectionError("Read failed due to communication error")
+        return real_read(data_name, motor_names)
+
+    bus.read = read_failing_once
+    live(timers)[0].fire()
+    assert failed and goal_writes(arm) == 3
+    assert arm.servo_compensation.terms == "full"
+
+
 def test_on_the_event_loop_the_rest_command_comes_by_itself(
     client, arms, config_file, clock, real_timers
 ):
