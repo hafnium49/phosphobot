@@ -79,6 +79,14 @@ class SO100Hardware(BaseManipulator):
     # its last compensated request and its rest timer. None until the first
     # compensated write.
     servo_compensation: Optional["ArmCompensation"] = None
+    # True while the PID gains last written by this server are the calibration's:
+    # enable_torque writes them. False from any other gain write (the gravity and
+    # leader-follower loops, also when they put gains back) until the next
+    # enable_torque that writes all six. The servo compensation assumes the
+    # calibration's gains and refuses while this is False.
+    # A server that has written no gains yet says True: the servos then hold what
+    # their EEPROM and the last session left, which only a read could tell.
+    gains_are_calibration: bool = True
 
     def _goal_written(self) -> None:
         """
@@ -282,13 +290,18 @@ class SO100Hardware(BaseManipulator):
         self._torque_enabled_cache = None
         try:
             self.motors_bus.write("Torque_Enable", 1)
+            written = []
             for servo_id, c in enumerate(self.config.pid_gains):
-                self._set_pid_gains_motors(
-                    servo_id + 1,
-                    p_gain=int(c.p_gain),
-                    i_gain=int(c.i_gain),
-                    d_gain=int(c.d_gain),
+                written.append(
+                    self._set_pid_gains_motors(
+                        servo_id + 1,
+                        p_gain=int(c.p_gain),
+                        i_gain=int(c.i_gain),
+                        d_gain=int(c.d_gain),
+                    )
                 )
+            if len(written) == len(self.SERVO_IDS) and all(written):
+                self.gains_are_calibration = True
             self.motor_communication_errors = 0
         except Exception as e:
             logger.warning(f"Error enabling torque: {e}")
@@ -318,7 +331,7 @@ class SO100Hardware(BaseManipulator):
 
     def _set_pid_gains_motors(
         self, servo_id: int, p_gain: int = 32, i_gain: int = 0, d_gain: int = 32
-    ) -> None:
+    ) -> bool:
         """
         Set the PID gains for the Feetech servo.
 
@@ -327,8 +340,13 @@ class SO100Hardware(BaseManipulator):
         :param i_gain: Integral gain (0-255)
         :param d_gain: Derivative gain (0-255)
 
-        Raises if the torque status cannot be read or a gain cannot be written:
-        the gains were then not set.
+        Returns True when the gains were written, False when they were not because
+        torque is off. Raises if the torque status cannot be read or a gain cannot
+        be written: the gains were then not set.
+
+        Every gain write of the server is here. From the first of them the gains
+        are not known to be the calibration's (gains_are_calibration); enable_torque
+        says so again once it has written all six servos.
         """
         try:
             torque_status = self.motors_bus.read(
@@ -339,6 +357,7 @@ class SO100Hardware(BaseManipulator):
             raise
 
         if torque_status.all() == 1:
+            self.gains_are_calibration = False
             self.motors_bus.write(
                 "P_Coefficient",
                 p_gain,
@@ -354,11 +373,12 @@ class SO100Hardware(BaseManipulator):
                 d_gain,
                 motor_names=self.servo_id_to_motor_name[servo_id],
             )
+            return True
 
-        else:
-            logger.warning(
-                "Motors torque is disabled. Motors must have torque enabled to change PID coefficients. Enable torque first."
-            )
+        logger.warning(
+            "Motors torque is disabled. Motors must have torque enabled to change PID coefficients. Enable torque first."
+        )
+        return False
 
     def _try_set_pid_gains_motors(
         self, servo_id: int, p_gain: int = 32, i_gain: int = 0, d_gain: int = 32

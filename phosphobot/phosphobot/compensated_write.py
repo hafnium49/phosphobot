@@ -200,7 +200,8 @@ def compensator_for(robot: Any, serial: Optional[str]) -> sc.Compensator:
     """
     The compensator of this arm, or the refusal: the variable unset (409), a config
     file that cannot be used (500), a robot that is not an SO-100/SO-101 (400), an
-    arm that is not in the config or whose calibration is not the config's (409).
+    arm that is not in the config, whose calibration is not the config's, or whose
+    gains this server changed since it last wrote the calibration's (409).
     """
     global _config
     if _config is None:
@@ -220,6 +221,12 @@ def compensator_for(robot: Any, serial: Optional[str]) -> sc.Compensator:
     difference = _calibration_difference(robot, compensator)
     if difference is not None:
         raise HTTPException(status_code=409, detail=f"arm {serial}: {difference}")
+    if not robot.gains_are_calibration:
+        # The model's stiffness is the one of the calibration's gains
+        raise HTTPException(
+            status_code=409,
+            detail=f"arm {serial}: the servo gains were changed by this server (gravity or leader-follower loop); switch torque on again to write the calibration's gains",
+        )
     return compensator
 
 

@@ -83,7 +83,7 @@ written. There is no fallback to an uncompensated write.
 | Status | Reason |
 |--------|--------|
 | 400 | the body has a key `compensate` or `final` (they are query parameters; whether or not the query has them). `unit` is not `rad`, `joints_ids` is given, not six angles, an angle (or its command) outside -pi..pi, or the robot is not an SO-100/SO-101. Also `final=true` without `compensate`: a caller that believes it is compensated is not served an uncompensated write |
-| 409 | `PHOSPHOBOT_SERVO_COMPENSATION` is unset; or the arm's serial is not in the config; or the arm's loaded calibration (the six `servos_offsets_signs` and `servos_offsets`) is not the one in the config for that serial; the detail says which |
+| 409 | `PHOSPHOBOT_SERVO_COMPENSATION` is unset; or the arm's serial is not in the config; or the arm's loaded calibration (the six `servos_offsets_signs` and `servos_offsets`) is not the one in the config for that serial; or this server changed the servo gains since it last wrote the calibration's (below); the detail says which |
 | 422 | `compensate` is neither `full` nor `static`, or `final` is not a boolean |
 | 500 | the config file cannot be used; or the command computed for this request is more than 60 (+1 for the truncation) motor units from the request on an arm joint, or changes the gripper at all (a fault on the server's side; the detail names the joint and the units) |
 | 503 | the arm is off the bus (also with `--only-simulation`: the simulation is never compensated) |
@@ -145,9 +145,16 @@ after a compensated write or a rest command that failed).
 
 ## Notes for callers
 
-- Do not mix compensated writes with another mover of the same arm. The compensation
-  assumes the PID gains of the arm's calibration; the leader-follower and gravity loops
-  change them.
+- Do not mix compensated writes with another mover of the same arm.
+- Gains. The model assumes the PID gains of the arm's calibration, which the server
+  writes at every torque on. The gravity loop and the leader-follower loop write other
+  gains and put back gains of their own choosing. From any such write until the next
+  torque on that writes all six servos, compensated requests are refused 409
+  (`the servo gains were changed by this server (gravity or leader-follower loop);
+  switch torque on again to write the calibration's gains`). Limit: a server that has
+  written no gains yet does not refuse, and the servos then hold whatever the last
+  session or their EEPROM left. After a server that was stopped during one of those
+  loops, switch torque on once before the first compensated request.
 - The fork converts radians to motor units with `int()`: request and command are each
   truncated, so the correction as written is within one unit of the model's.
 - The simulation mirror of the arm is set to the command, not to the request.
