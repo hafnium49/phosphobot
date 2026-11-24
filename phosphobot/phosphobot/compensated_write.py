@@ -9,22 +9,28 @@ copy from another repository. This module is what the server adds around it:
 
 - the config file named by the environment variable PHOSPHOBOT_SERVO_COMPENSATION,
   loaded once, at the first request that asks for compensation;
-- per arm, held by the arm object (ArmCompensation): one stream per set of terms and
-  the last compensated request. Anything else that writes the arm's goal voids them
-  (SO100Hardware._goal_written is where every such write passes);
+- per arm, held by the arm object (ArmCompensation): one stream per set of terms,
+  the last compensated request and the timer of the rest command. Anything else that
+  writes the arm's goal voids them (SO100Hardware._goal_written is where every such
+  write passes);
+- the rest command: the last command of a moving "full" stream carries lag x speed,
+  and a servo left with it rests past the request. A one-shot timer on the event
+  loop writes the stream's rest command when no further request comes;
 - the refusals. Every reason a request cannot be compensated is an HTTPException and
   nothing is written: there is no fallback to an uncompensated write.
 
 See phosphobot/docs/servo_compensation.md.
 """
 
+import asyncio
 import json
 import os
 import threading
 import time
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
 import numpy as np
 from fastapi import HTTPException
@@ -38,8 +44,55 @@ ENV_VAR = "PHOSPHOBOT_SERVO_COMPENSATION"
 Terms = Literal["full", "static"]
 TERMS: Dict[str, Tuple[str, ...]] = {"full": sc.TERMS, "static": sc.STATIC}
 
+# The rest command is written when no compensated request came for this long:
+# 1.5 x the stream's usual interval between requests, within these bounds
+REST_DELAY_MIN_S = 0.08
+REST_DELAY_MAX_S = 0.30
+
 # The clock of the streams. A name of this module, so that tests can set the time
 now = time.monotonic
+
+
+def usual_interval_s(stream: sc.Stream) -> float:
+    """
+    The stream's usual time between two requests: the median of its last intervals,
+    which is what it takes its speed over. MAX_DT_S for a stream that has none yet
+    (a first step, or requests further apart than MAX_DT_S), as the stream does.
+    """
+    intervals = stream._intervals
+    return float(np.median(intervals)) if intervals else sc.MAX_DT_S
+
+
+def rest_delay_s(stream: sc.Stream) -> float:
+    """REST_DELAY_S of this stream now."""
+    return float(
+        np.clip(1.5 * usual_interval_s(stream), REST_DELAY_MIN_S, REST_DELAY_MAX_S)
+    )
+
+
+class RestTimer:
+    """
+    A one-shot timer on the running event loop: the one the endpoints run on, since
+    it is made during a request. cancel() may be called from any thread.
+    """
+
+    def __init__(self, delay_s: float, callback: Callable[[], None]) -> None:
+        self._loop = asyncio.get_running_loop()
+        self._handle = self._loop.call_later(delay_s, callback)
+
+    def cancel(self) -> None:
+        try:
+            on_the_loop = asyncio.get_running_loop() is self._loop
+        except RuntimeError:
+            on_the_loop = False
+        if on_the_loop:
+            self._handle.cancel()
+            return
+        try:
+            self._loop.call_soon_threadsafe(self._handle.cancel)
+        except RuntimeError:
+            # The loop is closed: its timers will not fire
+            pass
 
 
 @dataclass
@@ -157,6 +210,8 @@ class ArmCompensation:
     - terms, requested_position: the terms of the last compensated request, and that
       request in motor units, converted the way the arm converts radians. Both None
       when the arm's last goal write was not a compensated one.
+    - the rest timer: at most one, pending while the last command of the "full"
+      stream carries a speed term. A new compensated request and void() cancel it.
 
     The endpoints write from the event loop, and some movers of the server from a
     thread of their own (the leader-follower loop, a gripper command in a background
@@ -172,6 +227,10 @@ class ArmCompensation:
         self._lock = threading.RLock()
         # True while this object writes the arm's goal itself
         self._own_write = False
+        self._rest_timer: Optional[RestTimer] = None
+        # Changes whenever the rest timer is cancelled: a callback of another
+        # generation, which the loop could not be kept from running, does nothing
+        self._generation = 0
 
     def goal_written(self) -> None:
         """
@@ -186,10 +245,50 @@ class ArmCompensation:
     def void(self) -> None:
         """What the streams knew is void: the arm's goal is not theirs any more."""
         with self._lock:
+            self._cancel_rest()
             for stream in self.streams.values():
                 stream.reset()
             self.terms = None
             self.requested_position = None
+
+    def _cancel_rest(self) -> None:
+        self._generation += 1
+        timer, self._rest_timer = self._rest_timer, None
+        if timer is not None:
+            timer.cancel()
+
+    def _rest(self, stream: sc.Stream, generation: int) -> None:
+        """
+        The rest timer's callback, on the event loop: no compensated request came
+        for REST_DELAY_S, the stream has stopped. Write its rest command, once.
+
+        Nothing is written for an arm that is off the bus or whose torque is not
+        on for all servos. A rest command that was not written is logged and voids
+        the streams; nothing is raised into the event loop.
+        """
+        with self._lock:
+            if generation != self._generation:
+                return
+            self._generation += 1
+            self._rest_timer = None
+            serial = getattr(self.robot, "SERIAL_ID", None)
+            try:
+                if not self.robot.is_connected:
+                    raise ConnectionError("the arm is not on the bus")
+                # Read from the bus now: torque can go off without the server
+                torque_enabled, _ = self.robot.read_torque_enabled(max_age_s=0)
+                if torque_enabled is None or not all(torque_enabled):
+                    raise ConnectionError(f"Torque_Enable is {torque_enabled}")
+                command = stream.rest(now())
+                if command is None:
+                    return
+                if self._write_own(command) is not True:
+                    raise ConnectionError("bus write failed")
+            except Exception as e:
+                logger.warning(
+                    f"Servo compensation: the rest command of arm {serial} was not written: {e}"
+                )
+                self.void()
 
     def _write_own(self, command: List[float]) -> Optional[bool]:
         """Write a command of a stream through the arm's usual path of a write in radians."""
@@ -207,9 +306,13 @@ class ArmCompensation:
 
         Returns what became of the bus write, as write_joint_positions, and what
         was added to each of the five arm joints, in motor units as written.
+
+        Called on the event loop (the endpoints are coroutines): the rest timer
+        is made on the running loop.
         """
         robot = self.robot
         with self._lock:
+            self._cancel_rest()
             for name, other in self.streams.items():
                 if name != terms:
                     # For a stream, a write with other terms is a write by somebody else
@@ -232,6 +335,11 @@ class ArmCompensation:
             written = robot._radians_vec_to_motor_units(np.array(command, dtype=float))
             self.terms = terms
             self.requested_position = [int(units) for units in requested]
+            if stream.pending:
+                # The command carries a speed term that the rest command takes back
+                self._rest_timer = RestTimer(
+                    rest_delay_s(stream), partial(self._rest, stream, self._generation)
+                )
             return done, [int(units) for units in (written - requested)[:5]]
 
 

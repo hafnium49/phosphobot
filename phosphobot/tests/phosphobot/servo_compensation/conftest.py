@@ -1,7 +1,8 @@
 """
 Harness of the servo compensation tests: the S1a endpoint harness (two real
 SO100Hardware objects whose motors bus is a FakeBus, in a bare FastAPI app), the
-real compensation config file as a fixture, and a clock the tests set.
+real compensation config file as a fixture, and a clock and rest timers that the
+tests drive.
 
 The guard of tests/phosphobot/conftest.py applies here as everywhere under
 tests/phosphobot: no test can open a port or connect to the rig's services.
@@ -35,6 +36,7 @@ from phosphobot.hardware import SO100Hardware, base, so100
 from phosphobot.hardware import servo_compensation as sc
 
 CONFIG = Path(__file__).parent / "so101_compensation_v1.json"
+REAL_REST_TIMER = compensated_write.RestTimer
 RIGHT = {"serial": RIGHT_SERIAL}
 LEFT = {"serial": LEFT_SERIAL}
 # A pose at which the model has something to say on every arm joint
@@ -68,6 +70,42 @@ class Clock:
     def advance(self, seconds: float) -> float:
         self.t += seconds
         return self.t
+
+
+class FakeTimer:
+    """
+    Stands in for compensated_write.RestTimer: the test is the event loop. fire()
+    runs the callback as the loop would, also for a timer that was cancelled (a
+    callback the loop had already taken must do nothing either).
+    """
+
+    def __init__(self, made: list, delay_s: float, callback: Callable) -> None:
+        self.delay_s, self.callback, self.cancelled = delay_s, callback, False
+        made.append(self)
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+    def fire(self) -> None:
+        self.callback()
+
+
+@pytest.fixture(autouse=True)
+def timers(monkeypatch: pytest.MonkeyPatch) -> list:
+    """Every rest timer the server made, in order. None runs by itself."""
+    made: list = []
+    monkeypatch.setattr(
+        compensated_write,
+        "RestTimer",
+        lambda delay_s, callback: FakeTimer(made, delay_s, callback),
+    )
+    return made
+
+
+@pytest.fixture
+def real_timers(timers: list, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The timers are the server's own, on the event loop of the test client."""
+    monkeypatch.setattr(compensated_write, "RestTimer", REAL_REST_TIMER)
 
 
 @pytest.fixture
