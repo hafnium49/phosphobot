@@ -24,6 +24,7 @@ See docs/servo_compensation.md, next to the package.
 """
 
 import asyncio
+import copy
 import json
 import os
 import threading
@@ -52,6 +53,27 @@ REST_DELAY_MAX_S = 0.30
 
 # The clock of the streams. A name of this module, so that tests can set the time
 now = time.monotonic
+
+
+# Everything a Stream changes in step(): saved before a step and put back when the
+# request is refused before anything reached the bus (a test holds this list to the
+# runtime's attributes)
+_STREAM_STATE = ("_q", "_t", "_dir", "_intervals", "pending")
+
+
+def _snapshot(stream: sc.Stream) -> Dict[str, Any]:
+    return {name: copy.copy(getattr(stream, name)) for name in _STREAM_STATE}
+
+
+def _restore(stream: sc.Stream, saved: Dict[str, Any]) -> None:
+    for name, value in saved.items():
+        setattr(stream, name, value)
+
+
+def _out_of_range(angles: List[float]) -> bool:
+    """What write_joint_positions refuses: NaN, or outside -pi..pi (so infinite too)."""
+    values = np.array(angles, dtype=float)
+    return bool(np.isnan(values).any() or (np.abs(values) > np.pi).any())
 
 
 def usual_interval_s(stream: sc.Stream) -> float:
@@ -302,6 +324,22 @@ class ArmCompensation:
         finally:
             self._own_write = False
 
+    def _refuse(self, angles: List[float], command: List[float]) -> None:
+        """
+        Raise the refusal of a request whose command must not be written. Called
+        before anything is changed and before the bus is touched.
+        """
+        if _out_of_range(angles):
+            raise HTTPException(
+                status_code=400,
+                detail=f"The request contains NaN or infinite values, or is out of -pi..pi, stopping to prevent damage: {angles}",
+            )
+        if _out_of_range(command):
+            raise HTTPException(
+                status_code=400,
+                detail=f"The request is within -pi..pi but its compensated command is not, stopping to prevent damage: request {angles}, command {command}",
+            )
+
     def write(
         self,
         compensator: sc.Compensator,
@@ -318,21 +356,29 @@ class ArmCompensation:
         Returns what became of the bus write, as write_joint_positions, and what
         was added to each of the five arm joints, in motor units as written.
 
+        The state changes only after the bus write succeeded. A request that is
+        refused before the bus is touched (_refuse) leaves everything as it was:
+        the stream as after the last accepted request, the other stream, the rest
+        timer of that request, what the raw read reports. A bus write that failed,
+        or of which nothing is known, voids the streams.
+
         Called on the event loop (the endpoints are coroutines): the rest timer
         is made on the running loop.
         """
         robot = self.robot
         with self._lock:
-            self._cancel_rest()
-            for name, other in self.streams.items():
-                if name != terms:
-                    # For a stream, a write with other terms is a write by somebody else
-                    other.reset()
             stream = self.streams.get(terms)
             if stream is None:
-                stream = self.streams[terms] = sc.Stream(compensator, TERMS[terms])
+                # Kept only if its first command is written
+                stream = sc.Stream(compensator, TERMS[terms])
+            saved = _snapshot(stream)
+            try:
+                command = stream.step(angles, now(), final=final)
+                self._refuse(angles, command)
+            except Exception:
+                _restore(stream, saved)
+                raise
 
-            command = stream.step(angles, now(), final=final)
             try:
                 done = self._write_own(command)
             except Exception:
@@ -342,6 +388,13 @@ class ArmCompensation:
                 self.void()
                 return done, []
 
+            # The servos hold this command: from here the state is this request's
+            self._cancel_rest()
+            for name, other in self.streams.items():
+                if name != terms:
+                    # For a stream, a write with other terms is a write by somebody else
+                    other.reset()
+            self.streams[terms] = stream
             requested = robot._radians_vec_to_motor_units(np.array(angles, dtype=float))
             written = robot._radians_vec_to_motor_units(np.array(command, dtype=float))
             self.terms = terms
