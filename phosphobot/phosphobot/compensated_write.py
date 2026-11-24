@@ -14,8 +14,9 @@ from another repository. This module is what the server adds around it:
   writes the arm's goal voids them (SO100Hardware._goal_written is where every such
   write passes);
 - the rest command: the last command of a moving "full" stream carries lag x speed,
-  and a servo left with it rests past the request. A one-shot timer on the event
-  loop writes the stream's rest command when no further request comes;
+  and a servo left with it rests past the request. A caller names its last request
+  (final): that command has no speed term. For a stream that stops without one, a
+  one-shot timer on the event loop writes the stream's rest command;
 - the refusals. Every reason a request cannot be compensated is an HTTPException and
   nothing is written: there is no fallback to an uncompensated write.
 
@@ -302,10 +303,17 @@ class ArmCompensation:
             self._own_write = False
 
     def write(
-        self, compensator: sc.Compensator, angles: List[float], terms: Terms
+        self,
+        compensator: sc.Compensator,
+        angles: List[float],
+        terms: Terms,
+        final: bool = False,
     ) -> Tuple[Optional[bool], List[int]]:
         """
         Write the command of the stream for this request (six angles in radians).
+
+        final: the caller says this is the last request of its move. The command
+        then carries no speed term and the stream is not pending: no rest timer.
 
         Returns what became of the bus write, as write_joint_positions, and what
         was added to each of the five arm joints, in motor units as written.
@@ -324,7 +332,7 @@ class ArmCompensation:
             if stream is None:
                 stream = self.streams[terms] = sc.Stream(compensator, TERMS[terms])
 
-            command = stream.step(angles, now())
+            command = stream.step(angles, now(), final=final)
             try:
                 done = self._write_own(command)
             except Exception:
@@ -347,7 +355,11 @@ class ArmCompensation:
 
 
 def write(
-    robot: Any, serial: Optional[str], angles: List[float], terms: Terms
+    robot: Any,
+    serial: Optional[str],
+    angles: List[float],
+    terms: Terms,
+    final: bool = False,
 ) -> Tuple[Optional[bool], dict]:
     """
     The compensated write of POST /joints/write: six angles in radians.
@@ -361,5 +373,5 @@ def write(
         raise HTTPException(status_code=503, detail=f"arm {serial} is not on the bus")
     if robot.servo_compensation is None:
         robot.servo_compensation = ArmCompensation(robot)
-    done, added = robot.servo_compensation.write(compensator, angles, terms)
-    return done, {"terms": terms, "correction_ticks": added}
+    done, added = robot.servo_compensation.write(compensator, angles, terms, final)
+    return done, {"terms": terms, "correction_ticks": added, "final": final}

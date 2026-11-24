@@ -901,6 +901,11 @@ async def write_joints(
         + "'static': the constant and the gravity sag. 'full': also the lag and the friction, from the stream of requests. "
         + "Needs six angles in rad and a server started with PHOSPHOBOT_SERVO_COMPENSATION; refused otherwise, never written uncompensated.",
     ),
+    final: bool = Query(
+        False,
+        description="With compensate: this request is the last one of its move. Its command carries no speed term (the servo is not led past the request) and no rest command follows. "
+        + "Refused without compensate.",
+    ),
     arm: Arm = Depends(arm_required),
 ) -> StatusResponse:
     """
@@ -914,6 +919,12 @@ async def write_joints(
         )
 
     robot = cast(BaseManipulator, robot)
+    if final and compensate is None:
+        # A caller that believes it is compensated is not served an uncompensated write
+        raise HTTPException(
+            status_code=400,
+            detail="final is for compensated writes: send it with compensate=full or compensate=static.",
+        )
     # Refused before any servo is written. (joints_ids is refused by the robot.)
     nb_joints = len(getattr(robot, "SERVO_IDS", request.angles))
     if request.joints_ids is None and len(request.angles) != nb_joints:
@@ -934,7 +945,7 @@ async def write_joints(
                 detail=f"compensate needs the angles of all joints in unit 'rad' and no joints_ids (got unit '{request.unit}').",
             )
         done, added = compensated_write.write(
-            robot, arm.serial, request.angles, compensate
+            robot, arm.serial, request.angles, compensate, final=final
         )
         compensation = {"compensation": added}
     bus_write = _bus_write_or_refuse(done, arm, failure="bus write failed")

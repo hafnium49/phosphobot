@@ -124,12 +124,16 @@ def units(arm: SO100Hardware, q_rad: list) -> list:
     return arm._radians_vec_to_motor_units(np.array(q_rad, dtype=float)).tolist()
 
 
-def write(client, angles, terms="full", arm=RIGHT, **body):  # type: ignore
-    """POST /joints/write?compensate=<terms> of six angles in radians."""
+def write(client, angles, terms="full", arm=RIGHT, final=None, **body):  # type: ignore
+    """
+    POST /joints/write?compensate=<terms> of six angles in radians; with `final`,
+    also &final=<final>.
+    """
+    params = {**arm, "compensate": terms}
+    if final is not None:
+        params["final"] = final
     return client.post(
-        "/joints/write",
-        params={**arm, "compensate": terms},
-        json={"angles": angles, "unit": "rad", **body},
+        "/joints/write", params=params, json={"angles": angles, "unit": "rad", **body}
     )
 
 

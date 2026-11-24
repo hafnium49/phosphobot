@@ -34,8 +34,8 @@ the gravity chain, `max_ticks`).
 
 ## The request
 
-`POST /joints/write?compensate=full|static` (with `robot_id` and/or `serial` as usual),
-body `{"angles": [six angles], "unit": "rad"}`.
+`POST /joints/write?compensate=full|static[&final=true]` (with `robot_id` and/or
+`serial` as usual), body `{"angles": [six angles], "unit": "rad"}`.
 
 - `static`: the constant and the sag. No speed is used.
 - `full`: also the lag and the friction. Speed and direction come from the successive
@@ -45,15 +45,25 @@ body `{"angles": [six angles], "unit": "rad"}`.
 The server keeps one stream per arm and per value of `compensate`. A request with the
 other value starts that stream anew.
 
+`final` (default `false`) says that this request is the last one of its move. Its
+command carries no speed term: the constant, the sag and the friction on the side the
+joint arrives from. No rest command follows, and the timer of the request before is
+cancelled. With `static` it is accepted and changes nothing in the command.
+
+A caller that knows the last point of its move should name it. The rest timer (below)
+is the fallback for a stream that just stops, and it leaves a short overshoot: until it
+fires, the servo follows a command that leads past the request (measured 2026-11-24 on
+the right arm: 15 to 31 ticks for about 0.15 s when a 0.3 rad/s line stops dead).
+
 The response has one more field, only on compensated writes:
 
 ```json
 {"status": "ok", "robot_id": 1, "serial": "5A68009540", "bus_write": true,
- "compensation": {"terms": "full", "correction_ticks": [0, 1, -7, -3, 1]}}
+ "compensation": {"terms": "full", "correction_ticks": [0, 1, -7, -3, 1], "final": false}}
 ```
 
 `correction_ticks`: motor units of the command minus motor units of the request, for the
-five arm joints, as written.
+five arm joints, as written. `final`: as requested.
 
 ## Refusals
 
@@ -62,9 +72,9 @@ written. There is no fallback to an uncompensated write.
 
 | Status | Reason |
 |--------|--------|
-| 400 | `unit` is not `rad`, `joints_ids` is given, not six angles, an angle (or its command) outside -pi..pi, or the robot is not an SO-100/SO-101 |
+| 400 | `unit` is not `rad`, `joints_ids` is given, not six angles, an angle (or its command) outside -pi..pi, or the robot is not an SO-100/SO-101. Also `final=true` without `compensate`: a caller that believes it is compensated is not served an uncompensated write |
 | 409 | `PHOSPHOBOT_SERVO_COMPENSATION` is unset; or the arm's serial is not in the config; or the arm's loaded calibration (the six `servos_offsets_signs` and `servos_offsets`) is not the one in the config for that serial; the detail says which |
-| 422 | `compensate` is neither `full` nor `static` |
+| 422 | `compensate` is neither `full` nor `static`, or `final` is not a boolean |
 | 500 | the config file cannot be used |
 | 503 | the arm is off the bus (also with `--only-simulation`: the simulation is never compensated) |
 | 502 | the bus write failed; the arm's streams are void |
@@ -73,19 +83,20 @@ written. There is no fallback to an uncompensated write.
 
 The last command of a moving `full` stream carries lag x speed. A servo left with it
 rests past the request (up to 27 ticks were measured). So after a `full` write whose
-command carries a speed term, the server starts a one-shot timer for that arm on its
-event loop. If no further compensated request for the arm arrives within
+command carries a speed term (not a `final` one), the server starts a one-shot timer for
+that arm on its event loop. If no further compensated request for the arm arrives within
 
     REST_DELAY_S = 1.5 x the stream's usual interval between requests, within 0.08 .. 0.30 s
 
-it writes the stream's rest command once (the last request at speed 0), through the same
-write path. A further compensated request cancels the timer. The rest command is not
+it writes the stream's rest command once (the last request with the constant and the sag
+only: no speed, and no friction side, because the joint ran on while the stop went
+unnoticed and comes back), through the same write path. A further compensated request cancels the timer. The rest command is not
 written when the arm is off the bus, or when `Torque_Enable`, read from the bus at that
 moment, is not on for all six servos; a rest command that was not written is logged
 (`the rest command of arm ... was not written`) and voids the arm's streams.
 
-A client that needs the arm at rest on its request waits at least `REST_DELAY_S` after
-its last request. The timer runs on the server's event loop, which also executes the
+A client that needs the arm at rest on its request and did not send `final` waits at
+least `REST_DELAY_S` after its last request. The timer runs on the server's event loop, which also executes the
 requests and their bus I/O one at a time: under load the rest command comes later, not
 earlier.
 

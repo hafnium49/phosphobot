@@ -76,7 +76,11 @@ def test_the_response_says_what_was_added(client, arms, config_file, clock):
     arm = arms[1]
     b = write(client, Q).json()
     moved = (np.array(goal(arm)) - np.array(units(arm, Q))).tolist()
-    assert b["compensation"] == {"terms": "full", "correction_ticks": moved[:5]}
+    assert b["compensation"] == {
+        "terms": "full",
+        "correction_ticks": moved[:5],
+        "final": False,
+    }
     assert (b["status"], b["robot_id"], b["serial"], b["bus_write"]) == (
         "ok",
         1,
