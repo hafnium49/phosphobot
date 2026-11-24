@@ -231,6 +231,26 @@ class SO100Hardware(BaseManipulator):
             "torque_enabled": [bool(word) for word in words["Torque_Enable"]],
         }
 
+    def read_goal_position_raw(self) -> Optional[List[int]]:
+        """
+        Goal_Position of the six servos, read from the bus now and addressed by
+        servo id: the words as read, as in read_raw.
+
+        Returns None when the arm is off the bus or the read failed.
+        """
+        if not self.is_connected:
+            return None
+        try:
+            words = self.motors_bus.read_with_motor_ids(
+                self.motors_bus.motor_models, list(self.SERVO_IDS), "Goal_Position"
+            )
+            self.motor_communication_errors = 0
+        except Exception as e:
+            logger.warning(f"Error reading goal positions: {e}")
+            self.update_motor_errors()
+            return None
+        return [int(word) for word in words]
+
     def _torque_reads_back_as(self, enabled: bool) -> bool:
         """
         Read Torque_Enable from the bus (never from the cache) and compare.

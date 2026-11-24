@@ -235,6 +235,8 @@ class ArmCompensation:
       when the arm's last goal write was not a compensated one.
     - the rest timer: at most one, pending while the last command of the "full"
       stream carries a speed term. A new compensated request and void() cancel it.
+    - the motor units of the last command it wrote: the rest timer writes only over
+      a goal register that still holds them.
 
     The endpoints write from the event loop, and some movers of the server from a
     thread of their own (the leader-follower loop, a gripper command in a background
@@ -247,6 +249,7 @@ class ArmCompensation:
         self.streams: Dict[str, sc.Stream] = {}
         self.terms: Optional[str] = None
         self.requested_position: Optional[List[int]] = None
+        self._written_units: Optional[List[int]] = None
         self._lock = threading.RLock()
         # True while this object writes the arm's goal itself
         self._own_write = False
@@ -273,6 +276,7 @@ class ArmCompensation:
                 stream.reset()
             self.terms = None
             self.requested_position = None
+            self._written_units = None
 
     def _cancel_rest(self) -> None:
         self._generation += 1
@@ -285,9 +289,13 @@ class ArmCompensation:
         The rest timer's callback, on the event loop: no compensated request came
         for REST_DELAY_S, the stream has stopped. Write its rest command, once.
 
-        Nothing is written for an arm that is off the bus or whose torque is not
-        on for all servos. A rest command that was not written is logged and voids
-        the streams; nothing is raised into the event loop.
+        Nothing is written for an arm that is off the bus, whose torque is not on
+        for all servos, or whose goal registers do not hold the stream's last
+        command any more: the choke point of the other writers is check-then-act
+        (a mover in a thread can pass it and reach the bus after a compensated
+        write), and another process can write the bus. A rest command that was not
+        written is logged and voids the streams; nothing is raised into the event
+        loop.
         """
         with self._lock:
             if generation != self._generation:
@@ -305,12 +313,26 @@ class ArmCompensation:
                     torque_enabled, _ = self.robot.read_torque_enabled(max_age_s=0)
                 if torque_enabled is None or not all(torque_enabled):
                     raise ConnectionError(f"Torque_Enable is {torque_enabled}")
+                # And the goal registers, as fresh and with one more try
+                goal = self.robot.read_goal_position_raw()
+                if goal is None:
+                    goal = self.robot.read_goal_position_raw()
+                if goal is None:
+                    raise ConnectionError("Goal_Position could not be read")
+                if goal != self._written_units:
+                    raise ConnectionError(
+                        "the goal register is not the stream's last command: somebody else wrote this arm "
+                        f"(register {goal}, last command {self._written_units})"
+                    )
                 command = stream.rest(now())
                 if command is None:
                     return
-                self._units_or_refusal([float(v) for v in stream._q], command)
+                _, written = self._units_or_refusal(
+                    [float(v) for v in stream._q], command
+                )
                 if self._write_own(command) is not True:
                     raise ConnectionError("bus write failed")
+                self._written_units = [int(units) for units in written]
             except Exception as e:
                 logger.warning(
                     f"Servo compensation: the rest command of arm {serial} was not written: {e}"
@@ -423,6 +445,7 @@ class ArmCompensation:
             self.streams[terms] = stream
             self.terms = terms
             self.requested_position = [int(units) for units in requested]
+            self._written_units = [int(units) for units in written]
             if stream.pending:
                 # The command carries a speed term that the rest command takes back
                 self._rest_timer = RestTimer(

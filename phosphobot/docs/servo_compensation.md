@@ -98,10 +98,15 @@ that arm on its event loop. If no further compensated request for the arm arrive
 
 it writes the stream's rest command once (the last request with the constant and the sag
 only: no speed, and no friction side, because the joint ran on while the stop went
-unnoticed and comes back), through the same write path. A further compensated request cancels the timer. The rest command is not
-written when the arm is off the bus, or when `Torque_Enable`, read from the bus at that
-moment, is not on for all six servos; a rest command that was not written is logged
-(`the rest command of arm ... was not written`) and voids the arm's streams.
+unnoticed and comes back), through the same write path. A further compensated request cancels the timer.
+
+Before it writes, the timer reads the bus: `Torque_Enable`, then the six `Goal_Position`
+registers (each read tried twice). The rest command is not written when the arm is off
+the bus, when torque is not on for all six servos, or when the goal registers are not
+the motor units of the stream's last command: then somebody else wrote this arm (a mover
+of the server in a thread of its own that slipped between, or another process on the
+bus), and its goal is left alone. A rest command that was not written is logged
+(`the rest command of arm ... was not written: ...`) and voids the arm's streams.
 
 A client that needs the arm at rest on its request and did not send `final` waits at
 least `REST_DELAY_S` after its last request. The timer runs on the server's event loop, which also executes the
