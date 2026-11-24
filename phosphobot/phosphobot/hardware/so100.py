@@ -75,8 +75,9 @@ class SO100Hardware(BaseManipulator):
     _torque_enabled_cache: Optional[Tuple[List[bool], float]] = None
     # time.monotonic() of the last successful bus read of all positions
     last_position_read_monotonic: Optional[float] = None
-    # Servo compensation of this arm (phosphobot/compensated_write.py): its streams
-    # and its last compensated request. None until the first compensated write.
+    # Servo compensation of this arm (phosphobot.compensated_write): its streams,
+    # its last compensated request and its rest timer. None until the first
+    # compensated write.
     servo_compensation: Optional["ArmCompensation"] = None
 
     def _goal_written(self) -> None:

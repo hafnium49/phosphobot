@@ -4,8 +4,8 @@ Opt-in servo compensation of POST /joints/write (compensate=full|static).
 A measured model of the servos predicts where each arm joint ends relative to its
 command. The compensated write sends the request minus that predicted error, so the
 servo ends on the request. The model's equation and the stream that turns successive
-requests into commands are phosphobot/hardware/servo_compensation.py, a verbatim
-copy from another repository. This module is what the server adds around it:
+requests into commands are phosphobot.hardware.servo_compensation, a verbatim copy
+from another repository. This module is what the server adds around it:
 
 - the config file named by the environment variable PHOSPHOBOT_SERVO_COMPENSATION,
   loaded once, at the first request that asks for compensation;
@@ -19,7 +19,7 @@ copy from another repository. This module is what the server adds around it:
 - the refusals. Every reason a request cannot be compensated is an HTTPException and
   nothing is written: there is no fallback to an uncompensated write.
 
-See phosphobot/docs/servo_compensation.md.
+See docs/servo_compensation.md, next to the package.
 """
 
 import asyncio

@@ -1,8 +1,8 @@
 # mypy: ignore-errors
 # ---------------------------------------------------------------------------------------------
 # VERBATIM COPY: the runtime of the servo compensation. Do not edit anything below the line
-# "END OF HEADER": tests/phosphobot/servo_compensation/test_runtime_copy.py pins the sha256 of
-# everything after that line to the sha256 of the source file.
+# "END OF HEADER": phosphobot/tests/phosphobot/servo_compensation/test_runtime_copy.py pins the
+# sha256 of everything after that line to the sha256 of the source file.
 #
 #   source   tools/servo_compensation.py of https://github.com/hafnium49/so101-nmpc-control
 #   commit   83423ae7f96dc1ff7157a7b4a03afa2fc71c40df
@@ -15,7 +15,7 @@
 # Not used here: what needs MuJoCo or the source repository's other tools (Compensator.from_file,
 # chain_from_mujoco, export_config) and the bench wrapper CompensatingDriver.
 # What the server adds around it (the config file, one stream per arm, the rest timer, the
-# refusals) is phosphobot/compensated_write.py; see phosphobot/docs/servo_compensation.md.
+# refusals) is phosphobot/phosphobot/compensated_write.py; see phosphobot/docs/servo_compensation.md.
 # ----- END OF HEADER -----
 """SO-101 servo compensation: the frozen actuator model inverted in the command path (the "physics AI" the actuator
 roadmap ends on; user, 2026-11-24). No robot I/O here.
