@@ -14,7 +14,7 @@ import phosphobot
 from phosphobot.hardware import SO100Hardware
 
 RUNTIME = Path(phosphobot.__file__).parent / "hardware" / "servo_compensation.py"
-SOURCE_SHA256 = "c90036bd1087b6977a4e0f23c7aad64e7489fbbc84703a37a25cf97abf940ec5"
+SOURCE_SHA256 = "22bfbf31a3a7ab36fb6b41473993adfaab8b53d0fec865757a538fdb8f05025e"
 CONFIG = Path(__file__).parent / "so101_compensation_v1.json"
 CONFIG_SHA256 = "5dc6de5463deafc9564682f294c08b5405eb1dd3771484327a51073d2f0a0b57"
 # Version 2 of the config: version 1 with the friction values of two left-arm joints
@@ -32,7 +32,7 @@ def test_the_body_of_the_copy_is_the_source_file():
     # The header is comments only, and names what the body is a copy of
     assert all(line.startswith(b"#") for line in header.splitlines())
     assert SOURCE_SHA256.encode() in header
-    assert b"cfaa8cc3fa5909df0248a03f85175d43df66f6c4" in header
+    assert b"875b648fb0870ba723b08261cebdca9f85832b67" in header
 
 
 def test_the_fixture_config_is_the_real_one():

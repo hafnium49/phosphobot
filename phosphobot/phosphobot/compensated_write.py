@@ -64,8 +64,9 @@ now = time.monotonic
 # Everything a Stream changes in step(): saved before a step and put back when the
 # request is refused before anything reached the bus (a test holds this list to the
 # runtime's attributes). _lead: the lead of the last command, which the runtime
-# moves by a bounded amount a request since its version 5
-_STREAM_STATE = ("_q", "_t", "_dir", "_intervals", "_lead", "pending")
+# moves by a bounded amount a request since its version 5. _v_prev: the speed of the
+# step before, half of the speed behind the lead since version 6
+_STREAM_STATE = ("_q", "_t", "_dir", "_intervals", "_lead", "_v_prev", "pending")
 
 
 def _snapshot(stream: sc.Stream) -> Dict[str, Any]:

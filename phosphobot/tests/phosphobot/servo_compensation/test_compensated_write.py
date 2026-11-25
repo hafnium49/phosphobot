@@ -158,3 +158,50 @@ def test_the_streams_of_the_two_term_sets_do_not_mix(client, arms, config_file, 
     # The "full" stream starts again: no speed, no direction
     write(client, Q)
     assert goal(arm) == units(arm, comp.command(Q, np.zeros(5), np.zeros(5)))
+
+
+def test_a_request_in_whole_ticks_is_not_made_to_rattle(client, arms, config_file, clock):
+    """
+    Runtime version 6. A slow line asked in whole motor units steps 4, 5, 4, 5 units.
+    The lead is lag x speed; taken from one step, the speed alternates with the
+    request and the command alternated about three times as much (on the right
+    elbow: lag x 15 Hz = 1.06, so steps of 3 and 6), at half the request rate, and
+    the elbow rattled. The speed behind the lead is now the mean of the last two
+    steps: the lead is steady and the written steps are the request's.
+    """
+    arm, comp = arms[1], compensator()
+    elbow, offset = 2, arm.config.servos_offsets[2]
+    assert comp.signs[elbow] == 1.0 and 1.0 < lags(comp)[elbow] / DT < 1.1
+
+    def request(elbow_units):
+        """The middle of that motor unit: int() gives it back whatever the rounding."""
+        q = list(Q)
+        q[elbow] = (elbow_units + 0.5 - offset) / sc.K
+        assert units(arm, q)[elbow] == elbow_units
+        return q
+
+    asked = [units(arm, Q)[elbow]]
+    for k in range(30):
+        asked.append(asked[-1] + (4 if k % 2 == 0 else 5))
+    written = []
+    for elbow_units in asked:
+        assert write(client, request(elbow_units)).status_code == 200
+        written.append(goal(arm)[elbow])
+        clock.advance(DT)
+
+    asked_steps, steps = np.diff(asked), np.diff(written)
+    assert asked_steps.tolist() == [4, 5] * 15
+    # From the third request on the lead is steady: lag x the mean speed of 4.5 units
+    # a request, 4.8 ticks, with the side of the move
+    side = np.array([0.0, 0.0, 1.0, 0.0, 0.0])
+    steady = lags(comp)[elbow] * 4.5 / DT
+    assert 4.7 < steady < 4.9
+    for k in range(2, 31):
+        want = command_with_lead(comp, request(asked[k]), [0, 0, steady, 0, 0], side)
+        assert abs(written[k] - units(arm, want)[elbow]) <= 1, k
+    # The written steps are the request's 4 and 5 (+-1 unit: the truncation, and the
+    # sag that changes as the elbow rises), with no alternation added to it
+    settled = slice(2, None)
+    assert np.all(np.abs(steps[settled] - asked_steps[settled]) <= 1)
+    fours, fives = steps[settled][0::2], steps[settled][1::2]
+    assert asked_steps[settled][0] == 4 and abs((fives.mean() - fours.mean()) - 1.0) < 0.5

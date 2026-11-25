@@ -5,8 +5,8 @@
 # sha256 of everything after that line to the sha256 of the source file.
 #
 #   source   tools/servo_compensation.py of https://github.com/hafnium49/so101-nmpc-control
-#   commit   cfaa8cc3fa5909df0248a03f85175d43df66f6c4
-#   sha256   c90036bd1087b6977a4e0f23c7aad64e7489fbbc84703a37a25cf97abf940ec5
+#   commit   875b648fb0870ba723b08261cebdca9f85832b67
+#   sha256   22bfbf31a3a7ab36fb6b41473993adfaab8b53d0fec865757a538fdb8f05025e
 #
 # To update: replace everything below the line with the new source file, and change the commit
 # and sha256 here and the pin of the test.
@@ -279,7 +279,11 @@ class Stream:
     Version 5 (2026-11-25): (1) the lead, lag x speed, moves toward its value by at most LEAD_SLEW_TICKS a request: a
     jump of the commanded speed no longer becomes a jump of the command (the elbow rang for two seconds in block 23).
     (2) On a final request, a joint whose previous command already lay past that request (its lead was larger than
-    the last step) gets no friction side: it runs on and comes to rest from either side."""
+    the last step) gets no friction side: it runs on and comes to rest from either side.
+
+    Version 6 (2026-11-25): the speed behind the lead is the mean of the last two steps' speeds. A request in whole
+    ticks alternates from step to step (4, 5, 4, 5 ticks); lag x the one-step speed added that alternation to the
+    command about three times over, at half the request rate, and the elbow rattled (blocks 23, 25, 26)."""
 
     def __init__(self, comp: Compensator, terms: Sequence[str] = TERMS):
         self.comp, self.terms = comp, tuple(terms)
@@ -291,17 +295,23 @@ class Stream:
         self._dir = np.zeros(5)
         self._intervals: list[float] = []
         self._lead = np.zeros(5)         # the lead in the last command, ticks (lag x speed, rate-limited)
+        self._v_prev = None              # the previous step's speed (ticks/s), None after a break
         self.pending = False             # True while the last command carries a speed term that rest() must take back
 
     def step(self, q_rad: Sequence[float], t: float, final: bool = False) -> list[float]:
         q = np.asarray(q_rad, float)
         v = np.zeros(5)
+        v_mean = np.zeros(5)
         if self._q is not None:
             gap = float(t) - self._t
             if gap <= MAX_DT_S:
                 self._intervals = (self._intervals + [max(MIN_DT_S, gap)])[-INTERVALS:]
+            else:
+                self._v_prev = None                             # a pause: the step before it says nothing of this one
             dt = float(np.median(self._intervals)) if self._intervals else MAX_DT_S
             v = self.comp._s * K * (q[:5] - self._q[:5]) / dt
+            v_mean = v if self._v_prev is None else 0.5 * (v + self._v_prev)
+            self._v_prev = v
         moving = np.abs(v) >= REST_TICKS_S
         self._dir = np.where(moving, np.tanh(v / V0), self._dir)
         step_ticks = self.comp._s * K * (q[:5] - self._q[:5]) if self._q is not None else np.zeros(5)
@@ -313,8 +323,9 @@ class Stream:
             v = np.zeros(5)
             moving = np.zeros(5, bool)
             self._lead = np.zeros(5)
+            self._v_prev = None
         else:
-            want = np.where(moving, lag * v, 0.0)
+            want = np.where(moving, lag * v_mean, 0.0)
             self._lead = self._lead + np.clip(want - self._lead, -LEAD_SLEW_TICKS, LEAD_SLEW_TICKS)
             v = np.where(lag > 0, self._lead / np.where(lag > 0, lag, 1.0), 0.0)     # the speed that gives this lead
         self.pending = bool(np.any(np.abs(self._lead) > 1e-9)) and "lag" in self.terms
@@ -329,6 +340,7 @@ class Stream:
         self.pending = False
         self._dir = np.zeros(5)
         self._lead = np.zeros(5)
+        self._v_prev = None
         return self.comp.command(list(self._q), np.zeros(5), self._dir, self.terms)
 
 

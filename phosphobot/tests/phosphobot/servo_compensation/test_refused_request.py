@@ -29,7 +29,7 @@ from .conftest import (
     write,
 )
 
-STREAM_STATE = ("_q", "_t", "_dir", "_intervals", "_lead", "pending")
+STREAM_STATE = ("_q", "_t", "_dir", "_intervals", "_lead", "_v_prev", "pending")
 
 
 def live(timers):
@@ -37,7 +37,12 @@ def live(timers):
 
 
 def state_of(stream):
-    return {name: np.array(getattr(stream, name), dtype=float).tolist() for name in STREAM_STATE}
+    return {
+        name: None
+        if getattr(stream, name) is None
+        else np.array(getattr(stream, name), dtype=float).tolist()
+        for name in STREAM_STATE
+    }
 
 
 def rest_units(arm, request):
@@ -122,15 +127,21 @@ def test_a_command_out_of_range_for_a_request_in_range_does_the_same(
     assert raw(client) == (units(arm, last), "full")
 
     # The stream goes on from the last accepted request, as if the refused one never
-    # came: a slower step, and the lead comes down from 20 by 4 (not from 24)
-    slow = [0.0, 0.0, 0.0, 0.0, 0.005, 0.0]
+    # came: a much slower step. The speed behind the lead is the mean of this step's
+    # and the one before (runtime version 6): lag x mean is 16.7 ticks, and the lead
+    # comes down to it from 20 (from 24 it would have come down to 20)
+    slow = [0.0, 0.0, 0.0, 0.0, 0.001, 0.0]
     q = [angle + step for angle, step in zip(last, slow)]
-    assert 0 < lags(comp)[4] * speed_ticks(comp, slow)[4] < 16.0
+    lead = lags(comp)[4] * 0.5 * (v + speed_ticks(comp, slow))[4]
+    assert 16.0 < lead < 17.5
     clock.advance(DT)
     assert write(client, q).status_code == 200
     slow_side = np.tanh(speed_ticks(comp, slow) / sc.V0)
     assert goal(arm) == units(
-        arm, command_with_lead(comp, q, [0.0, 0.0, 0.0, 0.0, 16.0], slow_side)
+        arm, command_with_lead(comp, q, [0.0, 0.0, 0.0, 0.0, lead], slow_side)
+    )
+    assert goal(arm) != units(
+        arm, command_with_lead(comp, q, [0.0, 0.0, 0.0, 0.0, 20.0], slow_side)
     )
     assert timer.cancelled
     (timer2,) = live(timers)
@@ -138,26 +149,33 @@ def test_a_command_out_of_range_for_a_request_in_range_does_the_same(
     assert goal(arm) == rest_units(arm, q)
 
 
-def test_a_refused_request_does_not_move_the_lead(client, arms, config_file, clock, timers):
+def test_a_refused_request_moves_neither_the_lead_nor_the_speed_of_the_step_before(
+    client, arms, config_file, clock, timers
+):
     """
-    The stream's lead is part of what a refused request must leave alone (runtime
-    version 5 keeps it between requests). Refused here: a request that holds the
-    line's joints and sends the elbow out of range. Had it been stepped, the base's
-    lead would have gone from 20 to 16 and the elbow's from 0 to 4.
+    What the stream keeps between requests is part of what a refused request must
+    leave alone: the lead (runtime version 5) and the speed of the step before
+    (version 6: the speed behind the lead is the mean of two steps). Refused here: a
+    request that holds the line's joints and sends the elbow out of range. Had it
+    been stepped, the base's lead would have gone from 20 to 16, and the step before
+    the next request would count as a rest: half the speed, and the lead would stay
+    at 16 instead of going on to 24.
     """
     arm, comp = arms[1], compensator()
     last = line(client, clock, 5)
     stream = arm.servo_compensation.streams["full"]
-    lead = stream._lead.copy()
+    lead, v_prev = stream._lead.copy(), stream._v_prev.copy()
     assert np.allclose(lead, lead_of_a_line(comp, DQ, 5), atol=1e-9) and lead[0] == -20.0
+    assert np.allclose(v_prev, speed_ticks(comp, DQ), rtol=1e-9)
 
     bad = list(last)
     bad[2] = 4.0
     clock.advance(DT)
     assert write(client, bad).status_code == 400
-    assert np.array_equal(stream._lead, lead)
+    assert np.array_equal(stream._lead, lead) and np.array_equal(stream._v_prev, v_prev)
 
-    # The line goes on: the 6th moving request, with 24 ticks of lead on the base
+    # The line goes on, and its command is the one it would have been had the refused
+    # request never come: the 6th moving request, with 24 ticks of lead on the base
     q = [angle + step for angle, step in zip(last, DQ)]
     clock.advance(DT)
     assert write(client, q).status_code == 200
