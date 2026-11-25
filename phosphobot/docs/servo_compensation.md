@@ -79,8 +79,30 @@ other value starts that stream anew.
 
 `final` (default `false`) says that this request is the last one of its move. Its
 command carries no speed term: the constant, the sag and the friction on the side the
-joint arrives from. No rest command follows, and the timer of the request before is
+joint arrives from (but see version 5 below for a joint that was commanded past this
+request). No rest command follows, and the timer of the request before is
 cancelled. With `static` it is accepted and changes nothing in the command.
+
+### Runtime version 5 (2026-11-25): the lead is rate-limited
+
+The lead of a command is its lag x speed part. Two things changed in the runtime, both
+after measurements on the arm, and neither changes the request or the config format:
+
+- **The lead moves by at most 4 ticks a request** (`LEAD_SLEW_TICKS`), up when a move
+  starts or speeds up and down when it slows or the request is held. A jump of the
+  commanded speed used to become a jump of the command, up to the whole bound of 60
+  ticks in one request; on 2026-11-25 an elbow rang for two seconds after one. A line at
+  0.3 rad/s and 15 Hz now has its full lead after 3 requests on the shoulder lift (12
+  ticks) and after 8 on the base (32 ticks). A stream that holds its last request lets
+  the lead go out over as many requests; while some is left the stream still counts as
+  moving, and if the requests stop then, the rest timer takes the remainder back.
+- **On a `final` request, a joint whose previous command already lay past that request
+  gets no friction side** (its lead was larger than the last step, which on a steady
+  line means a lag longer than the interval between requests: at 15 Hz the base and the
+  wrist joints of both arms and, barely, the right elbow; not the shoulder lifts). Such a joint runs on and
+  was seen to come to rest on either side of the request, so a friction correction for
+  the side it moved on was wrong half of the time. It keeps no side until it moves again.
+  A joint that arrives from the side it moved on keeps that side, as before.
 
 A caller that knows the last point of its move should name it. The rest timer (below)
 is the fallback for a stream that just stops, and it leaves a short overshoot: until it
@@ -127,9 +149,11 @@ that request still comes, and the raw read still reports that request.
 
 ## The rest command
 
-The last command of a moving `full` stream carries lag x speed. A servo left with it
+The last command of a moving `full` stream carries a lead (lag x speed, see version 5
+above). A servo left with it
 rests past the request (up to 27 ticks were measured). So after a `full` write whose
-command carries a speed term (not a `final` one), the server starts a one-shot timer for
+command carries a lead (not a `final` one; also a held request whose lead has not gone
+out yet), the server starts a one-shot timer for
 that arm on its event loop. If no further compensated request for the arm arrives within
 
     REST_DELAY_S = 1.5 x the stream's usual interval between requests, within 0.08 .. 0.30 s

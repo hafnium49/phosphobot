@@ -13,12 +13,17 @@ import pytest
 from phosphobot.hardware import servo_compensation as sc
 
 from .conftest import (
+    DQ,
     DT,
     RIGHT,
     Q,
+    command_with_lead,
     compensator,
     goal,
     goal_writes,
+    lead_of_a_line,
+    line,
+    speed_ticks,
     start_stream,
     units,
     write,
@@ -36,6 +41,7 @@ def moved_request():
 def test_a_final_write_is_the_request_at_speed_0_from_the_side_of_the_step(
     client, arms, config_file, clock, timers
 ):
+    """A move of one step: no command lay past its last request, every joint keeps its side."""
     arm, comp = arms[1], compensator()
     q2 = moved_request()
     assert write(client, Q).status_code == 200
@@ -71,6 +77,59 @@ def test_a_final_write_is_the_request_at_speed_0_from_the_side_of_the_step(
     }
     b = client.post("/joints/read/raw", params=RIGHT).json()
     assert (b["requested_position"], b["compensation"]) == (units(arm, q2), "full")
+
+
+def test_a_joint_that_was_commanded_past_the_final_request_gets_no_friction_side(
+    client, arms, config_file, clock, timers
+):
+    """
+    Runtime version 5. After five requests of a line the base's command leads its
+    request by 20 ticks and the shoulder lift's by 12 (all of its lag x speed); the
+    step to the final request is 13 ticks on both. The base's previous command
+    already lay past the final request: it runs on and comes to rest from either
+    side, so it gets no friction side. The shoulder lift arrives from the side it
+    moved on and keeps it.
+    """
+    arm, comp = arms[1], compensator()
+    q = line(client, clock, 5)
+    v = speed_ticks(comp, DQ)
+    side, lead = np.tanh(v / sc.V0), lead_of_a_line(comp, DQ, 5)
+    step = speed_ticks(comp, DQ) * DT
+    assert lead[0] == -20.0 and -12.5 < lead[1] < -11.5 and -13.5 < step[0] == step[1] < -12.5
+    assert goal(arm) == units(arm, command_with_lead(comp, q, lead, side))
+
+    final = [angle + dq for angle, dq in zip(q, DQ)]
+    clock.advance(DT)
+    r = write(client, final, final=True)
+    assert r.status_code == 200
+    side_left = side * np.array([0.0, 1.0, 1.0, 1.0, 1.0])
+    want = comp.command(final, np.zeros(5), side_left, sc.TERMS)
+    assert goal(arm) == units(arm, want)
+    # On the base that is the neutral command; with its side it would be a tick off
+    neutral = comp.command(final, np.zeros(5), np.zeros(5), sc.TERMS)
+    assert want[0] == neutral[0] != comp.command(final, np.zeros(5), side, sc.TERMS)[0]
+    assert want[1] != neutral[1]
+    stream = arm.servo_compensation.streams["full"]
+    assert stream.pending is False and not np.any(stream._lead)
+    assert all(timer.cancelled for timer in timers)
+
+    # The base stays without a side while it rests
+    clock.advance(DT)
+    assert write(client, final).status_code == 200
+    assert goal(arm) == units(arm, want) and stream.pending is False
+    assert all(timer.cancelled for timer in timers)
+
+
+def test_a_final_request_that_repeats_the_last_one_takes_the_side_of_every_leading_joint(
+    client, arms, config_file, clock, timers
+):
+    """The move has already stopped: every command that led lay past this request."""
+    arm, comp = arms[1], compensator()
+    q = line(client, clock, 5)
+    clock.advance(DT)
+    assert write(client, q, final=True).status_code == 200
+    assert goal(arm) == units(arm, comp.command(q, np.zeros(5), np.zeros(5), sc.TERMS))
+    assert arm.servo_compensation.streams["full"].pending is False
 
 
 def test_a_final_write_cancels_the_timer_of_the_write_before(
