@@ -96,6 +96,10 @@ after measurements on the arm, and neither changes the request or the config for
   ticks) and after 8 on the base (32 ticks). A stream that holds its last request lets
   the lead go out over as many requests; while some is left the stream still counts as
   moving, and if the requests stop then, the rest timer takes the remainder back.
+  Since version 6 (same day) the speed behind the lead is the mean of the last two
+  steps' speeds: a request in whole ticks steps 4, 5, 4, 5 ticks, lag x the one-step
+  speed added that alternation to the command about three times over, and the elbow
+  rattled.
 - **On a `final` request, a joint whose previous command already lay past that request
   gets no friction side** (its lead was larger than the last step, which on a steady
   line means a lag longer than the interval between requests: at 15 Hz the base and the
