@@ -15,13 +15,18 @@ from phosphobot import compensated_write
 from phosphobot.hardware import servo_compensation as sc
 
 from .conftest import (
+    DQ,
     DT,
     OTHER_WRITERS,
     RIGHT,
     Q,
+    command_with_lead,
     compensator,
     goal,
     goal_writes,
+    lead_of_a_line,
+    line,
+    speed_ticks,
     start_stream,
     units,
     write,
@@ -33,13 +38,19 @@ def live(timers):
 
 
 def mirror_of_start_stream(clock):
-    """The stream of the right arm after start_stream, computed by the runtime alone."""
-    mirror = sc.Stream(compensator())
+    """
+    The stream of the right arm after start_stream, computed by the runtime alone.
+    Its moving command is the model's at the first 4 ticks of the lead (version 5).
+    """
+    mirror, comp = sc.Stream(compensator()), compensator()
     q = list(Q)
     q[0] += 0.02
     q[1] -= 0.02
     mirror.step(Q, clock.t - DT)
-    return mirror, q, mirror.step(q, clock.t)
+    moving = mirror.step(q, clock.t)
+    side = np.tanh(speed_ticks(comp, DQ) / sc.V0)
+    assert moving == command_with_lead(comp, q, [-4.0, -4.0, 0.0, 0.0, 0.0], side)
+    return mirror, q, moving
 
 
 def test_a_stream_that_stops_gets_its_rest_command_once(
@@ -101,12 +112,88 @@ def test_there_is_no_timer_without_a_speed_term(client, arms, config_file, clock
     # "static" never has a speed term
     last = start_stream(client, clock, terms="static")
     assert timers == [] and not arm.servo_compensation.streams["static"].pending
-    # A stream that is asked the same pose again is at rest: its timer is cancelled
+    # A stream asked the same pose again after ONE moving request: the 4 ticks of lead
+    # that request brought in go out with this one, and its timer is cancelled
     last = start_stream(client, clock)
     assert len(live(timers)) == 1
     clock.advance(DT)
     assert write(client, last).status_code == 200
     assert live(timers) == [] and goal_writes(arm) == 6
+    side = np.tanh(speed_ticks(compensator(), DQ) / sc.V0)
+    assert goal(arm) == units(arm, compensator().command(last, np.zeros(5), side))
+
+
+def held(client, clock, arm, q, lead, side):
+    """The same request once more, DT later; the command must be the model's with this lead."""
+    clock.advance(DT)
+    assert write(client, q).status_code == 200
+    assert goal(arm) == units(arm, command_with_lead(compensator(), q, lead, side))
+
+
+def test_a_held_request_lets_the_lead_go_out_and_the_timer_takes_back_what_is_left(
+    client, arms, config_file, clock, timers
+):
+    """
+    Runtime version 5: at rest the lead goes out by 4 ticks a request, and the
+    stream is pending as long as some is left. A caller that holds its last request
+    and then stops sending: the timer writes the neutral rest command, once.
+    """
+    arm, comp = arms[1], compensator()
+    q = line(client, clock, 5)
+    side = np.tanh(speed_ticks(comp, DQ) / sc.V0)
+    full_lift = lead_of_a_line(comp, DQ, 5)[1]
+    assert lead_of_a_line(comp, DQ, 5)[0] == -20.0 and -12.5 < full_lift < -11.5
+    stream = arm.servo_compensation.streams["full"]
+
+    # Held three times: 20 -> 16 -> 12 -> 8 on the base, 12 -> 8 -> 4 -> 0 on the lift.
+    # The friction side stays the one the joints came from
+    for lead in (
+        [-16.0, full_lift + 4.0, 0.0, 0.0, 0.0],
+        [-12.0, full_lift + 8.0, 0.0, 0.0, 0.0],
+        [-8.0, 0.0, 0.0, 0.0, 0.0],
+    ):
+        held(client, clock, arm, q, lead, side)
+        # Still a lead to take back: pending, and exactly one timer waits
+        assert stream.pending and len(live(timers)) == 1
+    assert goal_writes(arm) == 9 and len(timers) == 8
+
+    # The caller stops sending. The timer writes the neutral rest command
+    (timer,) = live(timers)
+    clock.advance(timer.delay_s)
+    timer.fire()
+    assert goal_writes(arm) == 10
+    assert goal(arm) == units(arm, comp.command(q, np.zeros(5), np.zeros(5), sc.TERMS))
+    assert not np.any(stream._lead) and stream.pending is False
+    assert arm.servo_compensation.requested_position == units(arm, q)
+    # Once
+    calls = list(arm.motors_bus.calls)
+    for made in timers:
+        made.fire()
+    assert arm.motors_bus.calls == calls and live(timers) == [timer]
+
+
+def test_a_request_held_until_the_lead_is_out_needs_no_rest_command(
+    client, arms, config_file, clock, timers
+):
+    """Five more requests of the same pose after the line: 20 ticks of lead, 4 a request."""
+    arm, comp = arms[1], compensator()
+    q = line(client, clock, 5)
+    side = np.tanh(speed_ticks(comp, DQ) / sc.V0)
+    full_lift = lead_of_a_line(comp, DQ, 5)[1]
+    stream = arm.servo_compensation.streams["full"]
+    for base in (-16.0, -12.0, -8.0, -4.0):
+        lift = min(0.0, full_lift + (20.0 + base))
+        held(client, clock, arm, q, [base, lift, 0.0, 0.0, 0.0], side)
+        assert stream.pending and len(live(timers)) == 1
+    held(client, clock, arm, q, np.zeros(5), side)
+    # The command at speed 0 with the side the joints came from: not the neutral one
+    assert goal(arm) != units(arm, comp.command(q, np.zeros(5), np.zeros(5), sc.TERMS))
+    assert stream.pending is False and live(timers) == []
+    writes = goal_writes(arm)
+    clock.advance(1.0)
+    for made in timers:
+        made.fire()
+    assert goal_writes(arm) == writes == 11
 
 
 @pytest.mark.parametrize(

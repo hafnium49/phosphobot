@@ -14,9 +14,12 @@ from .conftest import (
     LEFT_SERIAL,
     RIGHT_SERIAL,
     Q,
+    command_with_lead,
     compensator,
     goal,
     goal_writes,
+    lags,
+    speed_ticks,
     units,
     write,
 )
@@ -49,16 +52,30 @@ def test_each_arm_joint_is_written_at_the_request_plus_the_predicted_correction(
     assert moved[5] == 0
     assert goal_writes(arm) == 1 and arms[0].motors_bus.calls == []
 
-    # The shoulder lift rises 0.02 rad in 1/15 s: the lag and friction terms join
-    q2 = step_down(Q)
-    clock.advance(DT)
-    r = write(client, q2)
-    v = np.array([0.0, compensator().signs[1] * sc.K * -0.02 / DT, 0.0, 0.0, 0.0])
-    want2 = predicted_ticks(q2, v, np.tanh(v / sc.V0), sc.TERMS)
-    assert abs(want2[1] - predicted_ticks(q2, np.zeros(5), np.zeros(5), sc.TERMS)[1]) > 3.0
-    moved2 = np.array(goal(arm)) - np.array(units(arm, q2))
-    assert np.all(np.abs(moved2[:5] - want2) <= 1.0), (moved2, want2)
-    assert moved2[5] == 0 and goal_writes(arm) == 2
+    # The shoulder lift rises 0.02 rad every 1/15 s. The friction term joins at once.
+    # The lead, lag x speed (12 ticks at this speed), comes in by 4 ticks a request
+    # (runtime version 5): 4, 8, then all of it
+    comp = compensator()
+    dq = [0.0, -0.02, 0.0, 0.0, 0.0]
+    v = speed_ticks(comp, dq)
+    side = np.tanh(v / sc.V0)
+    full = lags(comp)[1] * v[1]
+    assert sc.LEAD_SLEW_TICKS == 4.0 and -12.5 < full < -11.5
+    q = list(Q)
+    for n, lead_1 in ((1, -4.0), (2, -8.0), (3, full), (4, full)):
+        q = step_down(q)
+        clock.advance(DT)
+        assert write(client, q).status_code == 200
+        lead = np.array([0.0, lead_1, 0.0, 0.0, 0.0])
+        want = predicted_ticks(q, lead / lags(comp), side, sc.TERMS)
+        at_rest = predicted_ticks(q, np.zeros(5), np.zeros(5), sc.TERMS)
+        # What the speed adds on the shoulder lift: the lead, and a friction band of
+        # under a tick at this pose
+        assert 0.0 < abs((want - at_rest)[1] - lead_1) < 1.0
+        moved = np.array(goal(arm)) - np.array(units(arm, q))
+        assert np.all(np.abs(moved[:5] - want) <= 1.0), (n, moved, want)
+        assert goal(arm) == units(arm, command_with_lead(comp, q, lead, side)), n
+        assert moved[5] == 0 and goal_writes(arm) == 1 + n
 
 
 def test_the_command_is_the_streams_own(client, arms, config_file, clock):

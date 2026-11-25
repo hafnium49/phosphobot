@@ -24,9 +24,14 @@ from .conftest import (
     RIGHT,
     RIGHT_SERIAL,
     Q,
+    command_with_lead,
     compensator,
     goal,
     goal_writes,
+    lags,
+    lead_of_a_line,
+    line,
+    speed_ticks,
     start_stream,
     units,
     write,
@@ -46,13 +51,35 @@ def use_variant(tmp_path, monkeypatch, change):
     monkeypatch.setattr(compensated_write, "_config", None)
 
 
-def jump(client, clock):
-    """A first request, then 1 rad further on the base 1/15 s later: far over the bound."""
+RAMP = [0.05, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+
+def ramp(client, arm, clock, max_ticks, n=20):
+    """
+    A first request, then the base at 0.75 rad/s for n requests. Its lag x speed is
+    79 ticks, over the bound; the lead comes in by 4 ticks a request (runtime
+    version 5). Returns what was added to the base at each request, and checks each
+    against the model's equation at that lead, clipped to max_ticks.
+    """
+    comp = compensator()
+    v = speed_ticks(comp, RAMP)
+    side = np.tanh(v / sc.V0)
+    assert -80.0 < lags(comp)[0] * v[0] < -79.0
     assert write(client, Q).status_code == 200
-    q = list(Q)
-    q[0] += 1.0
-    clock.advance(DT)
-    return q, write(client, q)
+    q, added = list(Q), []
+    for k in range(1, n + 1):
+        q = [angle + step for angle, step in zip(q, RAMP)]
+        clock.advance(DT)
+        r = write(client, q)
+        assert r.status_code == 200, r.text
+        lead = lead_of_a_line(comp, RAMP, k)
+        assert lead[0] == -min(4.0 * k, 79.42) or k >= 20
+        want = np.clip(-comp.error_ticks(q, lead / lags(comp), side), -max_ticks, max_ticks)
+        moved = np.array(goal(arm)) - np.array(units(arm, q))
+        assert np.all(np.abs(moved[:5] - want) <= 1.0) and moved[5] == 0, (k, moved, want)
+        assert r.json()["compensation"]["correction_ticks"] == moved[:5].tolist()
+        added.append(int(moved[0]))
+    return added
 
 
 def test_the_bound_is_60_ticks():
@@ -88,22 +115,41 @@ def test_a_file_that_widens_the_bound_or_failed_validation_is_500(
 
 def test_a_file_may_tighten_the_bound(client, arms, clock, tmp_path, monkeypatch):
     use_variant(tmp_path, monkeypatch, lambda c: c.__setitem__("max_ticks", 20))
-    q, r = jump(client, clock)
-    assert r.status_code == 200
+    added = ramp(client, arms[1], clock, max_ticks=20.0)
     assert compensated_write._config.compensators[RIGHT_SERIAL].max_ticks == 20.0
-    moved = np.array(goal(arms[1])) - np.array(units(arms[1], q))
-    assert abs(moved[0]) == 20 and np.abs(moved[:5]).max() == 20 and moved[5] == 0
+    # 4 ticks of lead a request on top of the constant and the friction band (1.26
+    # ticks; +-1 for the truncation): the bound of 20 is reached at the fifth request
+    assert all(abs(added[k - 1] + (1.26 + 4 * k)) <= 1.0 for k in (1, 2, 3, 4))
+    assert set(added[4:]) == {-20}
 
 
-def test_with_the_real_config_a_jump_is_written_60_ticks_from_the_request(
+def test_with_the_real_config_a_fast_line_is_written_60_ticks_from_the_request(
     client, arms, config_file, clock
 ):
-    q, r = jump(client, clock)
-    assert r.status_code == 200
-    moved = (np.array(goal(arms[1])) - np.array(units(arms[1], q))).tolist()
-    # The base's sign is -1: +1 rad is 652 units down, and the lag term leads that way
-    assert moved[0] == -60 and max(abs(m) for m in moved[:5]) == 60 and moved[5] == 0
-    assert r.json()["compensation"]["correction_ticks"] == moved[:5]
+    added = ramp(client, arms[1], clock, max_ticks=60.0)
+    # The base's sign is -1: the units go down and the lead leads that way. Never a
+    # step of more than 4 ticks (+1 for the truncation), and 60 at the most
+    assert all(abs(added[k - 1] + (1.26 + 4 * k)) <= 1.0 for k in range(1, 15))
+    assert set(added[14:]) == {-60}
+    assert all(0 <= before - after <= 5 for before, after in zip(added, added[1:]))
+
+
+def test_a_jump_of_the_request_does_not_become_a_jump_of_the_command(
+    client, arms, config_file, clock
+):
+    """
+    Runtime version 5. 1 rad further on the base in one request is a commanded speed
+    of 15 rad/s; lag x speed would be 1588 ticks, and the command used to jump by the
+    whole bound of 60. Now the lead is the 4 ticks one request brings in.
+    """
+    arm, comp = arms[1], compensator()
+    jump = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    assert lags(comp)[0] * speed_ticks(comp, jump)[0] < -1500.0
+    q = line(client, clock, 1, dq=jump)
+    side = np.tanh(speed_ticks(comp, jump) / sc.V0)
+    assert goal(arm) == units(arm, command_with_lead(comp, q, [-4.0, 0, 0, 0, 0], side))
+    moved = (np.array(goal(arm)) - np.array(units(arm, q))).tolist()
+    assert moved[0] in (-5, -6) and max(abs(m) for m in moved[:5]) < 10 and moved[5] == 0
 
 
 def far_command(joint, ticks, gripper_rad=0.0):
@@ -186,13 +232,13 @@ def test_a_rest_command_beyond_the_bound_is_not_written(
 # The Goal_Position register after each step of run_the_pinned_sequence (see the test)
 PINNED = [
     [1917, 1657, 2627, 2305, 1853, 2080],  # first request: the constant and the sag
-    [1871, 1631, 2627, 2305, 1853, 2080],  # the line: lag and friction lead on the base and the shoulder lift
-    [1858, 1619, 2626, 2305, 1853, 2080],
-    [1845, 1606, 2626, 2305, 1853, 2080],
-    [1864, 1605, 2626, 2305, 1853, 2080],  # final: no lead
-    [1864, 1605, 2626, 2358, 1785, 2080],  # the wrist moves and stops dead: the lead stays
-    [1865, 1605, 2626, 2325, 1834, 2080],  # the rest command takes it back
-    [1865, 1606, 1922, 2324, 1834, 2080],  # the elbow jumps 1 rad: 60 units from its request, no more
+    [1899, 1639, 2627, 2305, 1853, 2080],  # the line: friction, and 4 ticks of lead on the base and the shoulder lift
+    [1882, 1622, 2626, 2305, 1853, 2080],  # 8 ticks
+    [1865, 1606, 2626, 2305, 1853, 2080],  # 12 ticks: all of the shoulder lift's
+    [1864, 1605, 2626, 2305, 1853, 2080],  # final: no lead; no command lay past it, the sides are kept
+    [1864, 1605, 2626, 2331, 1829, 2080],  # the wrist moves and stops dead: its 4 ticks of lead stay
+    [1865, 1605, 2626, 2325, 1834, 2080],  # the rest command takes them back, and the friction side
+    [1865, 1606, 1971, 2324, 1834, 2080],  # the elbow jumps 1 rad: 4 ticks of lead, not the bound
     [1917, 1657, 2627, 2305, 1853, 2080],  # static, back at the first pose
 ]
 
@@ -225,7 +271,7 @@ def run_the_pinned_sequence(client, arm, clock, timers):
     seen.append(goal(arm))
     q[2] -= 1.0
     clock.advance(DT)
-    ask(q)  # a jump: the bound
+    ask(q)  # a jump
     clock.advance(DT)
     ask(Q, terms="static")
     return seen
@@ -236,8 +282,9 @@ def test_one_sequence_is_pinned_to_literal_motor_units(
 ):
     """
     Not computed from the runtime at test time: these numbers were captured once,
-    on 2026-11-24, from a run of this sequence with the runtime of source commit
-    f52539c8 and the fixture config, and written here. A change of the model's
+    on 2026-11-25, from a run of this sequence with the runtime of source commit
+    cfaa8cc3 (version 5) and the fixture config, and written here. (With f52539c8
+    the line's second request was [1871, 1631, ...]: the whole lead at once.) A change of the model's
     equation, of the stream's logic or of the fork's conversion shows as a diff.
     """
     seen = run_the_pinned_sequence(client, arms[1], clock, timers)

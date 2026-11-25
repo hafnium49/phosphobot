@@ -151,6 +151,50 @@ def write(client, angles, terms="full", arm=RIGHT, final=None, **body):  # type:
     )
 
 
+def lags(comp: sc.Compensator) -> np.ndarray:
+    return np.array([comp.params[name]["lag_s"] for name in sc.JOINTS])
+
+
+def speed_ticks(comp: sc.Compensator, dq_rad: list) -> np.ndarray:
+    """The commanded speed of the five arm joints, ticks/s, for a step dq every DT."""
+    return np.array(comp.signs[:5]) * sc.K * np.array(dq_rad[:5], dtype=float) / DT
+
+
+def lead_of_a_line(comp: sc.Compensator, dq_rad: list, n: int) -> np.ndarray:
+    """
+    The lead (ticks) in the command of the n-th moving request of a line that starts
+    from rest: lag x speed, reached by at most LEAD_SLEW_TICKS (4) a request.
+    """
+    full = lags(comp) * speed_ticks(comp, dq_rad)
+    return np.sign(full) * np.minimum(n * sc.LEAD_SLEW_TICKS, np.abs(full))
+
+
+def command_with_lead(comp, q, lead_ticks, side, terms=sc.TERMS) -> list:  # type: ignore
+    """
+    The command for request q whose lead is `lead_ticks` and whose friction side is
+    `side`: the model's equation alone (no Stream), at the speed that gives this lead.
+    """
+    return comp.command(q, np.array(lead_ticks, dtype=float) / lags(comp), side, terms)
+
+
+# The step of start_stream and of line(): the base and the shoulder lift at 0.3 rad/s
+DQ = [0.02, -0.02, 0.0, 0.0, 0.0, 0.0]
+
+
+def line(client, clock, n, dq=DQ, start=Q, arm=RIGHT, terms="full") -> list:  # type: ignore
+    """
+    A first request at `start`, then n requests, each `dq` further and DT later.
+    Returns the last request.
+    """
+    assert write(client, start, terms=terms, arm=arm).status_code == 200
+    q = list(start)
+    for _ in range(n):
+        q = [angle + step for angle, step in zip(q, dq)]
+        clock.advance(DT)
+        assert write(client, q, terms=terms, arm=arm).status_code == 200
+    return q
+
+
 def goal(arm: SO100Hardware) -> list:
     return list(arm.motors_bus.regs["Goal_Position"])
 
@@ -162,7 +206,8 @@ def goal_writes(arm: SO100Hardware) -> int:
 def start_stream(client, clock, arm=RIGHT, terms="full") -> list:  # type: ignore
     """
     Two compensated requests, the second one moving: the stream has a speed and a
-    direction, and its last command carries them. Returns the last request.
+    direction, and its last command carries them (of the lead, lag x speed, the 4
+    ticks that one request brings in). Returns the last request.
     """
     assert write(client, Q, terms=terms, arm=arm).status_code == 200
     q = list(Q)

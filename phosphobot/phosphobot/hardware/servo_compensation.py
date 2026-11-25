@@ -5,8 +5,8 @@
 # sha256 of everything after that line to the sha256 of the source file.
 #
 #   source   tools/servo_compensation.py of https://github.com/hafnium49/so101-nmpc-control
-#   commit   f52539c8371b178e78afa24b4f43a95820ff5c81
-#   sha256   d1b4b32e194117611ba8e8a42d19fe4292f183d7cd75291aee6c94f9ef483d86
+#   commit   cfaa8cc3fa5909df0248a03f85175d43df66f6c4
+#   sha256   c90036bd1087b6977a4e0f23c7aad64e7489fbbc84703a37a25cf97abf940ec5
 #
 # To update: replace everything below the line with the new source file, and change the commit
 # and sha256 here and the pin of the test.
@@ -63,6 +63,7 @@ MIN_DT_S = 0.02                        # two requests closer than this: the spee
 REST_TICKS_S = 1.0                     # below this commanded speed the joint is at rest: no lag term, the last direction kept
 INTERVALS = 5                          # the speed is the step over the median of this many last intervals between requests
 REST_AFTER_S = 0.05                    # a read this long after the last command finds the stream stopped (bench driver)
+LEAD_SLEW_TICKS = 4.0                  # the lead (lag x speed) moves toward its value by at most this much a request
 
 
 class Compensator:
@@ -273,7 +274,12 @@ class Stream:
     Better, the caller names its last request (step(..., final=True)): that command carries no lag term, the servo is
     not led past the target, and the joint arrives from the side it moved on. A stop that is only found afterwards
     (rest()) has let the joint run on for the time it took to notice (about 20 ticks at 0.3 rad/s and 0.1 s; blocks 5
-    and 9) and it comes back from the other side: rest() therefore carries the constant and the sag only."""
+    and 9) and it comes back from the other side: rest() therefore carries the constant and the sag only.
+
+    Version 5 (2026-11-25): (1) the lead, lag x speed, moves toward its value by at most LEAD_SLEW_TICKS a request: a
+    jump of the commanded speed no longer becomes a jump of the command (the elbow rang for two seconds in block 23).
+    (2) On a final request, a joint whose previous command already lay past that request (its lead was larger than
+    the last step) gets no friction side: it runs on and comes to rest from either side."""
 
     def __init__(self, comp: Compensator, terms: Sequence[str] = TERMS):
         self.comp, self.terms = comp, tuple(terms)
@@ -284,6 +290,7 @@ class Stream:
         self._q = self._t = None
         self._dir = np.zeros(5)
         self._intervals: list[float] = []
+        self._lead = np.zeros(5)         # the lead in the last command, ticks (lag x speed, rate-limited)
         self.pending = False             # True while the last command carries a speed term that rest() must take back
 
     def step(self, q_rad: Sequence[float], t: float, final: bool = False) -> list[float]:
@@ -297,11 +304,20 @@ class Stream:
             v = self.comp._s * K * (q[:5] - self._q[:5]) / dt
         moving = np.abs(v) >= REST_TICKS_S
         self._dir = np.where(moving, np.tanh(v / V0), self._dir)
+        step_ticks = self.comp._s * K * (q[:5] - self._q[:5]) if self._q is not None else np.zeros(5)
         self._q, self._t = q, float(t)
+        lag = self.comp._lag
         if final:                                               # the move ends on this request: no lead past it
+            past = (self._lead - step_ticks) * np.sign(self._lead) > 0     # the previous command lay past this request
+            self._dir = np.where(past, 0.0, self._dir)
             v = np.zeros(5)
             moving = np.zeros(5, bool)
-        self.pending = bool(moving.any()) and "lag" in self.terms
+            self._lead = np.zeros(5)
+        else:
+            want = np.where(moving, lag * v, 0.0)
+            self._lead = self._lead + np.clip(want - self._lead, -LEAD_SLEW_TICKS, LEAD_SLEW_TICKS)
+            v = np.where(lag > 0, self._lead / np.where(lag > 0, lag, 1.0), 0.0)     # the speed that gives this lead
+        self.pending = bool(np.any(np.abs(self._lead) > 1e-9)) and "lag" in self.terms
         return self.comp.command(q_rad, v, self._dir, self.terms)
 
     def rest(self, t: float) -> list[float] | None:
@@ -312,6 +328,7 @@ class Stream:
             return None
         self.pending = False
         self._dir = np.zeros(5)
+        self._lead = np.zeros(5)
         return self.comp.command(list(self._q), np.zeros(5), self._dir, self.terms)
 
 
