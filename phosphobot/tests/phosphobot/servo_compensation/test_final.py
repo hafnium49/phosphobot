@@ -67,6 +67,7 @@ def test_a_final_write_is_the_request_at_speed_0_from_the_side_of_the_step(
         "terms": "full",
         "correction_ticks": moved[:5].tolist(),
         "final": True,
+        "stop_files": 0,
     }
     b = client.post("/joints/read/raw", params=RIGHT).json()
     assert (b["requested_position"], b["compensation"]) == (units(arm, q2), "full")

@@ -2,7 +2,8 @@
 Without `compensate`, POST /joints/write does what it did before the servo
 compensation existed. The motor units and the response bytes below were taken from
 the base commit (eae3154d) with these same requests, before any other change of
-this work; they hold whether or not a compensation config is loaded.
+this work; they hold whether or not a compensation config is loaded, and whether or
+not a STOP file is watched or present (STOP files are for compensated writes).
 """
 
 import socket
@@ -25,14 +26,19 @@ def test_the_guard_against_the_rig_ports_is_in_place_here_too():
             socket.create_connection(("127.0.0.1", port), timeout=1)
 
 
+@pytest.mark.parametrize("stop", ["unset", "watched", "present"])
 @pytest.mark.parametrize("config_file", [None, str(CONFIG), "/nonexistent/comp.json"])
 def test_a_write_without_compensate_is_the_base_write(
-    client, arms, monkeypatch, config_file
+    client, arms, monkeypatch, tmp_path, config_file, stop
 ):
     if config_file is None:
         monkeypatch.delenv("PHOSPHOBOT_SERVO_COMPENSATION", raising=False)
     else:
         monkeypatch.setenv("PHOSPHOBOT_SERVO_COMPENSATION", config_file)
+    if stop != "unset":
+        monkeypatch.setenv("PHOSPHOBOT_STOP_FILES", str(tmp_path / "STOP.json"))
+    if stop == "present":
+        (tmp_path / "STOP.json").write_text("{}")
     bus = arms[1].motors_bus
 
     r = client.post("/joints/write", params=R1, json={"angles": Q, "unit": "rad"})
