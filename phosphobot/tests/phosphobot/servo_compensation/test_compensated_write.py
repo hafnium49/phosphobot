@@ -80,6 +80,7 @@ def test_the_response_says_what_was_added(client, arms, config_file, clock):
         "terms": "full",
         "correction_ticks": moved[:5],
         "final": False,
+        "stop_files": 0,
     }
     assert (b["status"], b["robot_id"], b["serial"], b["bus_write"]) == (
         "ok",

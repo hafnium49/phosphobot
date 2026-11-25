@@ -36,6 +36,34 @@ the gravity chain, `max_ticks`).
   the server.
 - In both cases the server runs as usual and every other request is unchanged.
 
+### The operator's STOP: `PHOSPHOBOT_STOP_FILES`
+
+On this rig STOP is a file on the clients' side: while it exists, nothing may move, and
+clients check it before every write. The server's rest timer (below) is the one writer
+they cannot hold back, so the server is told the same files:
+`PHOSPHOBOT_STOP_FILES` = their paths, separated by `os.pathsep` (`:` on Linux). It is
+read once, together with the config file, and logged (`STOP files watched: [...]`, or the
+warning `no STOP file is configured: the rest timer cannot honour a STOP`).
+
+While any of those paths exists:
+
+- the rest timer writes nothing, logs `STOP file <path> present: the rest command of arm
+  <serial> was not written`, and voids the arm's streams. It checks immediately before
+  its write, after its reads of the bus;
+- a compensated `/joints/write` is refused with 423
+  (`STOP file <path> is present: nothing was written`), and nothing changes (see
+  Refusals);
+- uncompensated writes and every other endpoint are untouched: holding those back is the
+  clients' part, as before.
+
+A path that cannot be checked for another reason than that it does not exist (no
+permission on a directory, an I/O error) counts as present, and that is logged. The
+directory entry is what counts: a link that leads nowhere is a STOP file.
+
+**With no STOP file configured, a caller must name its last request (`final=true`), so
+that the timer never starts.** The response says how many are watched (`stop_files`,
+below): a client can refuse to rely on the timer when it is 0.
+
 ## The request
 
 `POST /joints/write?compensate=full|static[&final=true]` (with `robot_id` and/or
@@ -63,11 +91,14 @@ The response has one more field, only on compensated writes:
 
 ```json
 {"status": "ok", "robot_id": 1, "serial": "5A68009540", "bus_write": true,
- "compensation": {"terms": "full", "correction_ticks": [0, 1, -7, -3, 1], "final": false}}
+ "compensation": {"terms": "full", "correction_ticks": [0, 1, -7, -3, 1], "final": false,
+                  "stop_files": 1}}
 ```
 
 `correction_ticks`: motor units of the command minus motor units of the request, for the
-five arm joints, as written. `final`: as requested.
+five arm joints, as written. `final`: as requested. `stop_files`: the number of STOP
+files this server watches (0 when `PHOSPHOBOT_STOP_FILES` is unset: the rest timer
+cannot honour a STOP).
 
 **A client must check that the response has the `compensation` object.** The server
 refuses `compensate` or `final` sent in the JSON body, but it cannot catch a misspelt
@@ -84,6 +115,7 @@ written. There is no fallback to an uncompensated write.
 |--------|--------|
 | 400 | the body has a key `compensate` or `final` (they are query parameters; whether or not the query has them). `unit` is not `rad`, `joints_ids` is given, not six angles, an angle (or its command) outside -pi..pi, or the robot is not an SO-100/SO-101. Also `final=true` without `compensate`: a caller that believes it is compensated is not served an uncompensated write |
 | 409 | `PHOSPHOBOT_SERVO_COMPENSATION` is unset; or the arm's serial is not in the config; or the arm's loaded calibration (the six `servos_offsets_signs` and `servos_offsets`) is not the one in the config for that serial; or this server changed the servo gains since it last wrote the calibration's (below); the detail says which |
+| 423 | a STOP file is present (or cannot be checked); the detail names it |
 | 422 | `compensate` is neither `full` nor `static`, or `final` is not a boolean |
 | 500 | the config file cannot be used; or the command computed for this request is more than 60 (+1 for the truncation) motor units from the request on an arm joint, or changes the gripper at all (a fault on the server's side; the detail names the joint and the units) |
 | 503 | the arm is off the bus (also with `--only-simulation`: the simulation is never compensated) |
@@ -105,6 +137,9 @@ that arm on its event loop. If no further compensated request for the arm arrive
 it writes the stream's rest command once (the last request with the constant and the sag
 only: no speed, and no friction side, because the joint ran on while the stop went
 unnoticed and comes back), through the same write path. A further compensated request cancels the timer.
+
+The timer writes nothing while a STOP file is present (see `PHOSPHOBOT_STOP_FILES`
+above; with none configured it cannot know of a STOP).
 
 Before it writes, the timer reads the bus: `Torque_Enable`, then the six `Goal_Position`
 registers (each read tried twice). The rest command is not written when the arm is off

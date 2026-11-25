@@ -18,7 +18,9 @@ from another repository. This module is what the server adds around it:
   (final): that command has no speed term. For a stream that stops without one, a
   one-shot timer on the event loop writes the stream's rest command;
 - the refusals. Every reason a request cannot be compensated is an HTTPException and
-  nothing is written: there is no fallback to an uncompensated write.
+  nothing is written: there is no fallback to an uncompensated write;
+- the operator's STOP: the files named by PHOSPHOBOT_STOP_FILES. While one of them
+  exists, the rest timer writes nothing and a compensated write is refused.
 
 See docs/servo_compensation.md, next to the package.
 """
@@ -42,6 +44,10 @@ from phosphobot.hardware import servo_compensation as sc
 from phosphobot.hardware.so100 import SO100Hardware
 
 ENV_VAR = "PHOSPHOBOT_SERVO_COMPENSATION"
+# Paths separated by os.pathsep. On the rig, STOP is a file that the clients check
+# before every write: its existence means stop. The rest timer is the one writer the
+# clients cannot hold back, so the server watches the same files
+STOP_ENV_VAR = "PHOSPHOBOT_STOP_FILES"
 
 Terms = Literal["full", "static"]
 TERMS: Dict[str, Tuple[str, ...]] = {"full": sc.TERMS, "static": sc.STATIC}
@@ -126,6 +132,8 @@ class _Config:
     compensators: Dict[str, sc.Compensator] = field(default_factory=dict)
     status_code: int = 200
     error: Optional[str] = None
+    # The STOP files watched, read from the environment with the config file
+    stop_files: Tuple[str, ...] = ()
 
 
 # None until the first request that asks for compensation
@@ -138,12 +146,18 @@ def _load() -> _Config:
     and answered to every request that asks for compensation.
     """
     path = os.environ.get(ENV_VAR)
+    stop_files = tuple(
+        os.path.abspath(entry)
+        for entry in os.environ.get(STOP_ENV_VAR, "").split(os.pathsep)
+        if entry.strip()
+    )
     if not path:
         logger.info(f"Servo compensation was asked for, but {ENV_VAR} is unset")
         return _Config(
             path=None,
             status_code=409,
             error=f"servo compensation is not configured on this server ({ENV_VAR} is unset)",
+            stop_files=stop_files,
         )
     try:
         cfg = json.loads(Path(path).read_text())
@@ -163,13 +177,52 @@ def _load() -> _Config:
             path=path,
             status_code=500,
             error=f"servo compensation config {path} cannot be used: {type(e).__name__}: {e}",
+            stop_files=stop_files,
         )
     logger.info(
         f"Servo compensation config loaded from {path}: schema {schema}, "
         f"model {cfg.get('model_file')} {cfg.get('model_version')}, "
         f"arms {sorted(compensators)}, at most {cfg.get('max_ticks', sc.MAX_TICKS)} ticks per joint"
     )
-    return _Config(path=path, compensators=compensators)
+    if stop_files:
+        logger.info(f"STOP files watched: {list(stop_files)}")
+    else:
+        logger.warning(
+            f"no STOP file is configured: the rest timer cannot honour a STOP ({STOP_ENV_VAR} is unset)"
+        )
+    return _Config(path=path, compensators=compensators, stop_files=stop_files)
+
+
+def _stop_file() -> Optional[Tuple[str, Optional[str]]]:
+    """
+    Whether the operator's STOP holds now: the first watched path that exists (with
+    None) or that cannot be checked (with the reason); None when none does. Asked
+    immediately before a compensated command is written, by a request or by the
+    rest timer.
+
+    Fail closed: a path that cannot be checked for another reason than that it does
+    not exist (permission, I/O error) counts as present, and that is logged. The
+    directory entry is what counts (lstat): a link that leads nowhere is a STOP.
+    """
+    for path in _config.stop_files if _config is not None else ():
+        try:
+            os.lstat(path)
+        except FileNotFoundError:
+            continue
+        except Exception as e:
+            stopped = (path, f"{type(e).__name__}: {e}")
+            logger.warning(_stop_words(stopped, "present"))
+            return stopped
+        return path, None
+    return None
+
+
+def _stop_words(stopped: Tuple[str, Optional[str]], present: str) -> str:
+    """What _stop_file found, for a log line ("present") or a refusal ("is present")."""
+    path, problem = stopped
+    if problem is None:
+        return f"STOP file {path} {present}"
+    return f"STOP file {path} cannot be checked ({problem}) and counts as present"
 
 
 def _calibration_difference(
@@ -296,7 +349,8 @@ class ArmCompensation:
         The rest timer's callback, on the event loop: no compensated request came
         for REST_DELAY_S, the stream has stopped. Write its rest command, once.
 
-        Nothing is written for an arm that is off the bus, whose torque is not on
+        Nothing is written while a STOP file is present (_stop_file), nor for an
+        arm that is off the bus, whose torque is not on
         for all servos, or whose goal registers do not hold the stream's last
         command any more: the choke point of the other writers is check-then-act
         (a mover in a thread can pass it and reach the bus after a compensated
@@ -336,6 +390,15 @@ class ArmCompensation:
                     return
                 request = np.asarray(stream._q, dtype=float).tolist()
                 _, written = self._units_or_refusal(request, command)
+                # The last thing before the write, after the reads of the bus: a
+                # STOP that appeared during them holds this command back too
+                stopped = _stop_file()
+                if stopped is not None:
+                    logger.warning(
+                        f"{_stop_words(stopped, 'present')}: the rest command of arm {serial} was not written"
+                    )
+                    self.void()
+                    return
                 if self._write_own(command) is not True:
                     raise ConnectionError("bus write failed")
                 self._written_units = [int(units) for units in written]
@@ -412,7 +475,8 @@ class ArmCompensation:
         was added to each of the five arm joints, in motor units as written.
 
         The state changes only after the bus write succeeded. A request that is
-        refused before the bus is touched (_units_or_refusal) leaves everything as it was:
+        refused before the bus is touched (_units_or_refusal, or 423 while a STOP
+        file is present) leaves everything as it was:
         the stream as after the last accepted request, the other stream, the rest
         timer of that request, what the raw read reports. A bus write that failed,
         or of which nothing is known, voids the streams.
@@ -429,6 +493,13 @@ class ArmCompensation:
             try:
                 command = stream.step(angles, now(), final=final)
                 requested, written = self._units_or_refusal(angles, command)
+                # The last thing before the write
+                stopped = _stop_file()
+                if stopped is not None:
+                    raise HTTPException(
+                        status_code=423,
+                        detail=f"{_stop_words(stopped, 'is present')}: nothing was written",
+                    )
             except Exception:
                 _restore(stream, saved)
                 raise
@@ -471,8 +542,11 @@ def write(
     The compensated write of POST /joints/write: six angles in radians.
 
     Returns what became of the bus write and the `compensation` field of the
-    response. Raises the refusals of compensator_for, and 503 for an arm that is
-    off the bus (also in only-simulation mode: the simulation has no servos).
+    response; its "stop_files" is the number of STOP files this server watches (0:
+    the rest timer cannot honour a STOP, and the caller should name its last
+    request). Raises the refusals of compensator_for, 503 for an arm that is off the
+    bus (also in only-simulation mode: the simulation has no servos), and 423 while
+    a STOP file is present.
     """
     compensator = compensator_for(robot, serial)
     if not robot.is_connected:
@@ -480,4 +554,10 @@ def write(
     if robot.servo_compensation is None:
         robot.servo_compensation = ArmCompensation(robot)
     done, added = robot.servo_compensation.write(compensator, angles, terms, final)
-    return done, {"terms": terms, "correction_ticks": added, "final": final}
+    assert _config is not None  # compensator_for loaded it
+    return done, {
+        "terms": terms,
+        "correction_ticks": added,
+        "final": final,
+        "stop_files": len(_config.stop_files),
+    }

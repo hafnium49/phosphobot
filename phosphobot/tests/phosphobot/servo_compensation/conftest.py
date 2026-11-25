@@ -46,8 +46,12 @@ DT = 1 / 15
 
 @pytest.fixture(autouse=True)
 def server_without_compensation(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Each test starts as a server does: the variable unset, nothing loaded."""
+    """
+    Each test starts as a server does: the variables unset, nothing loaded. (The
+    rig's own STOP files must never reach a test through the environment.)
+    """
     monkeypatch.delenv(compensated_write.ENV_VAR, raising=False)
+    monkeypatch.delenv(compensated_write.STOP_ENV_VAR, raising=False)
     monkeypatch.setattr(compensated_write, "_config", None)
 
 
